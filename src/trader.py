@@ -20,6 +20,9 @@ class StockTrader:
         Args:
             config_path: 설정 파일 경로
         """
+        # logger 먼저 초기화
+        self.logger = logging.getLogger(__name__)
+
         with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
             # 환경변수 치환
@@ -33,7 +36,6 @@ class StockTrader:
         self.hts_id = self.config['kis_api'].get('hts_id', '')
 
         self.access_token = None
-        self.logger = logging.getLogger(__name__)
 
     def _replace_env_variables(self, content: str) -> str:
         """

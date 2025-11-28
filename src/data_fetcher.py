@@ -22,6 +22,9 @@ class KISDataFetcher:
         Args:
             config_path: 설정 파일 경로
         """
+        # logger 먼저 초기화
+        self.logger = logging.getLogger(__name__)
+
         with open(config_path, 'r', encoding='utf-8') as f:
             config_content = f.read()
             # 환경변수 치환
@@ -35,7 +38,6 @@ class KISDataFetcher:
         self.hts_id = self.config['kis_api'].get('hts_id', '')
 
         self.access_token = None
-        self.logger = logging.getLogger(__name__)
 
     def _replace_env_variables(self, content: str) -> str:
         """
@@ -401,8 +403,23 @@ class KISDataFetcher:
 
             if data and 'output' in data:
                 stock_list = []
+
+                # 첫 번째 항목으로 사용 가능한 필드 확인 (디버깅)
+                if len(data['output']) > 0:
+                    first_item = data['output'][0]
+                    self.logger.debug(f"Available fields in volume-rank response: {list(first_item.keys())}")
+
                 for item in data['output'][:top_n]:
-                    stock_code = item['stck_shrn_iscd']
+                    # 여러 가능한 종목코드 필드 시도
+                    stock_code = (item.get('stck_shrn_iscd') or
+                                 item.get('mksc_shrn_iscd') or
+                                 item.get('stck_iscd') or
+                                 item.get('iscd'))
+
+                    if not stock_code:
+                        self.logger.warning(f"Could not find stock code in item: {item}")
+                        continue
+
                     # volume-rank API의 모든 가능한 종목명 필드 확인
                     stock_name = (item.get('hts_kor_isnm') or
                                  item.get('prdt_name') or
@@ -427,6 +444,8 @@ class KISDataFetcher:
 
         except Exception as e:
             self.logger.error(f"Failed to fetch top market cap stocks: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
             return []
 
     def get_all_domestic_stocks(self, use_top_market_cap: bool = True, top_n: int = 30) -> List[Dict]:
