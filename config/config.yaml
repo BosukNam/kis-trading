@@ -1,0 +1,62 @@
+# KIS API Configuration
+# 환경변수에서 값을 읽어옵니다
+# export KIS_APP_KEY="your_app_key"
+# export KIS_APP_SECRET="your_app_secret"
+# export KIS_ACCT_STOCK="your_account_number"
+# export KIS_HTS_ID="your_hts_id"
+kis_api:
+  app_key: "${KIS_APP_KEY}"
+  app_secret: "${KIS_APP_SECRET}"
+  account_number: "${KIS_ACCT_STOCK}"
+  hts_id: "${KIS_HTS_ID}"
+  base_url: "https://openapi.koreainvestment.com:9443"  # 실전투자용
+
+# Screening Criteria for Undervalued Stocks
+screening:
+  # PER (Price to Earnings Ratio) - 낮을수록 저평가
+  per_max: 15.0
+  per_min: 0.0
+
+  # ROE (Return on Equity) - 높을수록 좋음
+  roe_min: 10.0
+
+  # PBR (Price to Book Ratio) - 낮을수록 저평가
+  pbr_max: 1.5
+  pbr_min: 0.0
+
+  # Market Cap (시가총액) - 단위: 억원
+  market_cap_min: 1000
+  market_cap_max: 100000
+
+  # Debt Ratio (부채비율) - 낮을수록 좋음
+  debt_ratio_max: 200.0
+
+# Trading Settings
+trading:
+  # 매수 주문 설정
+  order_type: "limit"  # limit, market
+  max_stocks_to_buy: 5  # 한번에 매수할 최대 종목 수
+  amount_per_stock: 1000000  # 종목당 매수 금액 (원)
+
+# Stock Lists
+stocks:
+  # 국내 주식 (KOSPI, KOSDAQ)
+  domestic:
+    - "005930"  # 삼성전자
+    - "000660"  # SK하이닉스
+    - "035720"  # 카카오
+    - "051910"  # LG화학
+    - "006400"  # 삼성SDI
+
+  # 해외 주식 (US Market)
+  international:
+    - "AAPL"    # Apple
+    - "MSFT"    # Microsoft
+    - "GOOGL"   # Google
+    - "TSLA"    # Tesla
+    - "NVDA"    # NVIDIA
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "stock_analyzer.log"
