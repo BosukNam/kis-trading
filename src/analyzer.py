@@ -226,9 +226,9 @@ class StockAnalyzer:
 
         df = pd.DataFrame(analyzed_stocks)
 
-        # 저평가 점수로 정렬 (낮을수록 저평가)
+        # 저평가 점수로 정렬 (높을수록 먼저)
         if not df.empty and 'undervalue_score' in df.columns:
-            df = df.sort_values('undervalue_score')
+            df = df.sort_values('undervalue_score', ascending=False)
 
         return df
 
@@ -257,7 +257,7 @@ class StockAnalyzer:
 
     def print_analysis_report(self, df: pd.DataFrame):
         """
-        분석 결과 리포트 출력
+        분석 결과 리포트 출력 (저평가 점수 높은 순으로 정렬)
 
         Args:
             df: 분석 결과 DataFrame
@@ -266,20 +266,22 @@ class StockAnalyzer:
             self.logger.warning("No stocks to analyze")
             return
 
+        # 저평가 점수 기준 내림차순 정렬 (높은 점수가 먼저)
+        df_sorted = df.sort_values('undervalue_score', ascending=False)
+
         print("\n" + "="*100)
         print("주식 분석 리포트")
         print("="*100)
 
-        for idx, row in df.iterrows():
+        for idx, row in df_sorted.iterrows():
             rating = self.get_stock_rating(row.to_dict())
-            print(f"\n종목: {row['stock_name']} ({row['stock_code']})")
+            # 종목명 한글 표시: "종목명 (종목코드)" 형식
+            stock_display = f"{row['stock_name']} ({row['stock_code']})" if row['stock_name'] != row['stock_code'] else row['stock_code']
+            print(f"\n종목: {stock_display}")
             print(f"  등급: {rating}")
             print(f"  현재가: {row['current_price']:,.0f}원")
             print(f"  시가총액: {row['market_cap']:,.0f}백만원")
-            print(f"  PER: {row['per']:.2f}")
-            print(f"  PBR: {row['pbr']:.2f}")
-            print(f"  ROE: {row['roe']:.2f}%")
-            print(f"  부채비율: {row['debt_ratio']:.2f}%")
+            print(f"  PER: {row['per']:.2f} | PBR: {row['pbr']:.2f} | ROE: {row['roe']:.2f}%")
             print(f"  저평가 점수: {row['undervalue_score']:.2f}")
             print("-" * 100)
 

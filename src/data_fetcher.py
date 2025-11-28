@@ -8,8 +8,10 @@ import yaml
 import logging
 import os
 import re
+import time
 from typing import Dict, List, Optional
 from datetime import datetime
+from stock_names import get_stock_name
 
 
 class KISDataFetcher:
@@ -82,6 +84,39 @@ class KISDataFetcher:
             self.logger.error(f"Failed to get access token: {e}")
             raise
 
+    def _api_call_with_retry(self, url: str, headers: Dict, params: Dict, max_retries: int = 3, delay: float = 0.2) -> Optional[Dict]:
+        """
+        API 호출 재시도 로직
+
+        Args:
+            url: API URL
+            headers: 요청 헤더
+            params: 요청 파라미터
+            max_retries: 최대 재시도 횟수
+            delay: 재시도 간 대기 시간(초)
+
+        Returns:
+            응답 데이터 또는 None
+        """
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get('rt_cd') == '0':
+                    return data
+                else:
+                    self.logger.warning(f"API returned error code: {data.get('msg1', 'Unknown error')} (Attempt {attempt + 1}/{max_retries})")
+
+            except Exception as e:
+                self.logger.warning(f"API call failed: {e} (Attempt {attempt + 1}/{max_retries})")
+
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+
+        return None
+
     def get_domestic_stock_price(self, stock_code: str) -> Dict:
         """
         국내 주식 현재가 조회
@@ -109,25 +144,76 @@ class KISDataFetcher:
         }
 
         try:
-            response = requests.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
+            data = self._api_call_with_retry(url, headers, params)
 
-            if data['rt_cd'] == '0':
+            if data:
                 output = data['output']
-                return {
+
+                # 종목명 조회 (여러 필드 확인, 'None' 문자열도 제외)
+                def get_valid_name(value):
+                    if value and value != 'None' and value.strip():
+                        return value
+                    return None
+
+                stock_name = (get_valid_name(output.get('hts_kor_isnm')) or
+                             get_valid_name(output.get('prdt_name')) or
+                             get_valid_name(output.get('prdt_abrv_name')))
+
+                # 종목명을 못 찾았으면 매핑 테이블에서 조회
+                if not stock_name:
+                    stock_name = get_stock_name(stock_code)
+
+                # 재무지표 파싱 (빈 문자열과 None 처리)
+                def safe_float(value, default=0.0):
+                    if value is None or value == '':
+                        return default
+                    try:
+                        return float(value)
+                    except (ValueError, TypeError):
+                        return default
+
+                def safe_int(value, default=0):
+                    if value is None or value == '':
+                        return default
+                    try:
+                        return int(value)
+                    except (ValueError, TypeError):
+                        return default
+
+                per = safe_float(output.get('per'))
+                pbr = safe_float(output.get('pbr'))
+                eps = safe_float(output.get('eps'))
+                bps = safe_float(output.get('bps'))
+
+                # ROE 계산 (EPS / BPS * 100)
+                roe = 0.0
+                if bps > 0 and eps != 0:
+                    roe = (eps / bps) * 100
+
+                # 디버그 로깅
+                self.logger.debug(f"Stock {stock_code} name fields: hts_kor_isnm='{output.get('hts_kor_isnm')}', "
+                                f"prdt_name='{output.get('prdt_name')}', prdt_abrv_name='{output.get('prdt_abrv_name')}'")
+                self.logger.debug(f"Stock {stock_code} ({stock_name}): PER={per}, PBR={pbr}, EPS={eps}, BPS={bps}, ROE={roe:.2f}")
+
+                stock_data = {
                     'stock_code': stock_code,
-                    'stock_name': output.get('prdy_vrss', ''),
-                    'current_price': int(output.get('stck_prpr', 0)),
-                    'market_cap': int(output.get('hts_avls', 0)),  # 시가총액 (백만원)
-                    'per': float(output.get('per', 0)),
-                    'pbr': float(output.get('pbr', 0)),
-                    'eps': float(output.get('eps', 0)),
-                    'bps': float(output.get('bps', 0)),
+                    'stock_name': stock_name,
+                    'current_price': safe_int(output.get('stck_prpr')),
+                    'market_cap': safe_int(output.get('hts_avls')),  # 시가총액 (백만원)
+                    'per': per,
+                    'pbr': pbr,
+                    'eps': eps,
+                    'bps': bps,
+                    'roe': roe,
                     'timestamp': datetime.now().isoformat()
                 }
+
+                self.logger.info(f"✓ {stock_name} ({stock_code}): 가격={stock_data['current_price']:,}원, "
+                               f"PER={per:.2f}, PBR={pbr:.2f}, ROE={roe:.2f}%")
+
+                return stock_data
             else:
-                self.logger.error(f"Error fetching stock {stock_code}: {data['msg1']}")
+                self.logger.error(f"Failed to fetch stock {stock_code} after retries")
                 return None
 
         except Exception as e:
@@ -183,6 +269,48 @@ class KISDataFetcher:
             self.logger.error(f"Failed to fetch international stock {stock_symbol}: {e}")
             return None
 
+    def get_stock_basic_info(self, stock_code: str) -> Optional[Dict]:
+        """
+        국내 주식 기본정보 조회 (종목명 포함)
+
+        Args:
+            stock_code: 종목코드
+
+        Returns:
+            기본정보 딕셔너리
+        """
+        if not self.access_token:
+            self.get_access_token()
+
+        url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/search-stock-info"
+        headers = {
+            "content-type": "application/json",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "CTPF1002R"
+        }
+        params = {
+            "PRDT_TYPE_CD": "300",
+            "PDNO": stock_code
+        }
+
+        try:
+            data = self._api_call_with_retry(url, headers, params)
+
+            if data and 'output' in data:
+                output = data['output']
+                return {
+                    'stock_name': output.get('prdt_name', stock_code),
+                    'stock_abbr_name': output.get('prdt_abrv_name', ''),
+                }
+            else:
+                return None
+
+        except Exception as e:
+            self.logger.debug(f"Failed to fetch stock basic info {stock_code}: {e}")
+            return None
+
     def get_domestic_financial_info(self, stock_code: str) -> Dict:
         """
         국내 주식 재무정보 조회 (ROE, 부채비율 등)
@@ -233,25 +361,110 @@ class KISDataFetcher:
             self.logger.error(f"Failed to fetch financial info {stock_code}: {e}")
             return None
 
-    def get_all_domestic_stocks(self) -> List[Dict]:
+    def get_top_market_cap_stocks(self, top_n: int = 30) -> List[Dict]:
+        """
+        시가총액 상위 종목 코드 및 종목명 조회
+
+        Args:
+            top_n: 조회할 상위 종목 수
+
+        Returns:
+            종목 정보 리스트 (딕셔너리: stock_code, stock_name)
+        """
+        if not self.access_token:
+            self.get_access_token()
+
+        url = f"{self.base_url}/uapi/domestic-stock/v1/quotations/volume-rank"
+        headers = {
+            "content-type": "application/json",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHPST01710000"
+        }
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_SCR_DIV_CODE": "20171",  # 시가총액 상위
+            "FID_INPUT_ISCD": "0000",
+            "FID_DIV_CLS_CODE": "0",
+            "FID_BLNG_CLS_CODE": "0",
+            "FID_TRGT_CLS_CODE": "111111111",
+            "FID_TRGT_EXLS_CLS_CODE": "0",
+            "FID_INPUT_PRICE_1": "",
+            "FID_INPUT_PRICE_2": "",
+            "FID_VOL_CNT": "",
+            "FID_INPUT_DATE_1": ""
+        }
+
+        try:
+            data = self._api_call_with_retry(url, headers, params)
+
+            if data and 'output' in data:
+                stock_list = []
+                for item in data['output'][:top_n]:
+                    stock_code = item['stck_shrn_iscd']
+                    # volume-rank API의 모든 가능한 종목명 필드 확인
+                    stock_name = (item.get('hts_kor_isnm') or
+                                 item.get('prdt_name') or
+                                 item.get('prdt_abrv_name') or
+                                 item.get('itm_name'))
+
+                    # 'None' 문자열 처리 및 빈 값 처리
+                    if not stock_name or stock_name == 'None' or not stock_name.strip():
+                        # 매핑 테이블에서 조회
+                        stock_name = get_stock_name(stock_code)
+
+                    stock_list.append({
+                        'stock_code': stock_code,
+                        'stock_name': stock_name
+                    })
+
+                self.logger.info(f"Found {len(stock_list)} top stocks by market cap")
+                return stock_list
+            else:
+                self.logger.error("Failed to fetch top market cap stocks")
+                return []
+
+        except Exception as e:
+            self.logger.error(f"Failed to fetch top market cap stocks: {e}")
+            return []
+
+    def get_all_domestic_stocks(self, use_top_market_cap: bool = True, top_n: int = 30) -> List[Dict]:
         """
         설정된 모든 국내 주식 데이터 조회
+
+        Args:
+            use_top_market_cap: True면 시가총액 상위 종목 조회, False면 설정 파일 종목 조회
+            top_n: 시가총액 상위 조회 시 종목 수
 
         Returns:
             주식 데이터 리스트
         """
         stocks = []
-        domestic_stocks = self.config['stocks']['domestic']
+        stock_info_map = {}  # 종목코드 -> 종목명 매핑
 
-        for stock_code in domestic_stocks:
-            self.logger.info(f"Fetching domestic stock: {stock_code}")
+        if use_top_market_cap:
+            # 시가총액 상위 종목 조회 (종목명 포함)
+            stock_list = self.get_top_market_cap_stocks(top_n)
+            # 종목명 매핑 생성
+            for item in stock_list:
+                stock_info_map[item['stock_code']] = item['stock_name']
+            stock_codes = [item['stock_code'] for item in stock_list]
+        else:
+            # 설정 파일의 종목 조회
+            stock_codes = self.config['stocks']['domestic']
+
+        for idx, stock_code in enumerate(stock_codes, 1):
+            self.logger.info(f"[{idx}/{len(stock_codes)}] Fetching domestic stock: {stock_code}")
             stock_data = self.get_domestic_stock_price(stock_code)
             if stock_data:
-                # 재무정보 추가
-                financial_info = self.get_domestic_financial_info(stock_code)
-                if financial_info:
-                    stock_data.update(financial_info)
+                # 종목명이 코드와 같으면 매핑에서 찾은 종목명으로 대체
+                if stock_data['stock_name'] == stock_code and stock_code in stock_info_map:
+                    stock_data['stock_name'] = stock_info_map[stock_code]
                 stocks.append(stock_data)
+
+            # API 호출 제한 고려 (초당 20건)
+            time.sleep(0.05)
 
         return stocks
 

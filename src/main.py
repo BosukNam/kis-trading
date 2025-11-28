@@ -52,10 +52,12 @@ class StockTradingSystem:
 
         # 국내 주식 조회
         if market in ['domestic', 'both']:
-            print("\n국내 주식 데이터 수집 중...")
-            domestic_stocks = self.data_fetcher.get_all_domestic_stocks()
+            print("\n국내 주식 데이터 수집 중 (시가총액 상위 30개)...")
+            self.logger.info("\n국내 주식 데이터 수집 중 (시가총액 상위 30개)...")
+            domestic_stocks = self.data_fetcher.get_all_domestic_stocks(use_top_market_cap=True, top_n=30)
             all_stocks.extend(domestic_stocks)
             print(f"✓ {len(domestic_stocks)}개 국내 종목 수집 완료")
+            self.logger.info(f"✓ {len(domestic_stocks)}개 국내 종목 수집 완료")
 
         # 해외 주식 조회
         if market in ['international', 'both']:
@@ -70,8 +72,10 @@ class StockTradingSystem:
 
         # 주식 분석
         print("\n주식 분석 중...")
+        self.logger.info("\n주식 분석 중...")
         analyzed_df = self.analyzer.analyze_multiple_stocks(all_stocks)
         print(f"✓ {len(analyzed_df)}개 종목 분석 완료")
+        self.logger.info(f"✓ {len(analyzed_df)}개 종목 분석 완료")
 
         # 분석 리포트 출력
         self.analyzer.print_analysis_report(analyzed_df)
