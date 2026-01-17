@@ -20,6 +20,8 @@ class DARTClient:
 
     # 종목코드 -> DART 고유번호 매핑 캐시 (클래스 레벨)
     _corp_code_cache: Dict[str, str] = {}
+    # 회사명 -> DART 고유번호 매핑 캐시 (정확한 매칭용)
+    _corp_name_cache: Dict[str, str] = {}
     _corp_code_loaded: bool = False
 
     def __init__(self):
@@ -98,15 +100,24 @@ class DARTClient:
             # XML 파싱
             root = ET.fromstring(xml_content)
             count = 0
+            name_count = 0
             for item in root.findall("list"):
                 stock_code = item.findtext("stock_code", "").strip()
                 corp_code = item.findtext("corp_code", "").strip()
+                corp_name = item.findtext("corp_name", "").strip()
+
                 if stock_code and corp_code:
                     DARTClient._corp_code_cache[stock_code] = corp_code
                     count += 1
 
+                # 회사명 -> corp_code 매핑 (상장사만, 중복 시 첫 번째 유지)
+                if corp_name and corp_code and stock_code:
+                    if corp_name not in DARTClient._corp_name_cache:
+                        DARTClient._corp_name_cache[corp_name] = corp_code
+                        name_count += 1
+
             DARTClient._corp_code_loaded = True
-            logger.info(f"Loaded {count} corp codes from DART")
+            logger.info(f"Loaded {count} corp codes, {name_count} corp names from DART")
             return True
 
         except Exception as e:
@@ -124,6 +135,18 @@ class DARTClient:
             await self._load_corp_codes()
 
         return DARTClient._corp_code_cache.get(stock_code)
+
+    async def get_corp_code_by_name(self, corp_name: str) -> Optional[str]:
+        """회사명으로 DART 고유번호 조회 (정확한 매칭)"""
+        # 캐시에 없으면 로드 시도
+        if not DARTClient._corp_code_loaded:
+            await self._load_corp_codes()
+
+        # 정확히 일치하는 경우
+        if corp_name in DARTClient._corp_name_cache:
+            return DARTClient._corp_name_cache[corp_name]
+
+        return None
 
     async def search_company(self, corp_name: str) -> Optional[str]:
         """회사명으로 DART 고유번호 검색"""
