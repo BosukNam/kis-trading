@@ -517,6 +517,11 @@
 
             <div class="section-title">최근 공시</div>
             <div id="disclosure-content"></div>
+
+            <div class="section-title">내 보유종목 (국내)</div>
+            <div id="financial-holdings-content">
+                <div class="loading">로딩 중</div>
+            </div>
         </div>
     </div>
 
@@ -587,7 +592,7 @@
                 } else if (currentTab === 'technical') {
                     loadTechnicalHoldings();
                 } else if (currentTab === 'financial') {
-                    // 재무/공시 탭은 검색 전용
+                    loadFinancialHoldings();
                 }
             });
         });
@@ -1334,7 +1339,127 @@
             `;
         }
 
-        // 재무/공시 조회
+        // 재무 탭 - 보유종목 로드
+        async function loadFinancialHoldings() {
+            const container = document.getElementById('financial-holdings-content');
+
+            if (cachedDomesticBalance) {
+                renderFinancialHoldings(cachedDomesticBalance, container);
+                return;
+            }
+
+            container.innerHTML = '<div class="loading">로딩 중</div>';
+
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: 'get_domestic_balance', arguments: {} })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                cachedDomesticBalance = data;
+                renderFinancialHoldings(data, container);
+            } catch (e) {
+                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        function renderFinancialHoldings(data, container) {
+            let html = '<div class="stock-list">';
+
+            const holdings = data.holdings || [];
+            if (holdings.length > 0) {
+                holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
+                    const changeClass = getChangeClass(stock.profit_rate);
+                    html += `
+                        <div class="stock-item" onclick="quickSearchFinancial('${stock.stock_name}', '${stock.stock_code}')">
+                            <div class="stock-info">
+                                <h3>${stock.stock_name}</h3>
+                                <div class="code">${stock.stock_code}</div>
+                            </div>
+                            <div class="stock-price">
+                                <div class="current">${formatCurrency(stock.eval_amount)}</div>
+                                <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                html += '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목 없음</div>';
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        async function quickSearchFinancial(stockName, stockCode) {
+            document.getElementById('financial-name').value = stockName;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            await searchFinancialWithCode(stockName, stockCode);
+        }
+
+        // 종목코드를 알고 있을 때 빠른 조회
+        async function searchFinancialWithCode(stockName, stockCode) {
+            const resultContainer = document.getElementById('financial-search-result');
+            const disclosureContainer = document.getElementById('disclosure-content');
+
+            resultContainer.innerHTML = '<div class="loading">재무정보 조회 중</div>';
+            disclosureContainer.innerHTML = '<div class="loading">공시 조회 중</div>';
+
+            // 재무비율 조회
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_financial_ratio',
+                        arguments: { stock_code: stockCode }
+                    })
+                });
+
+                const data = await res.json();
+
+                if (!data.error) {
+                    renderFinancialRatio(data, resultContainer);
+                } else {
+                    resultContainer.innerHTML = `<div class="error">${data.error}</div>`;
+                }
+            } catch (e) {
+                resultContainer.innerHTML = `<div class="error">재무비율 조회 실패</div>`;
+            }
+
+            // 공시 조회 (DART API)
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_disclosures',
+                        arguments: { stock_name: stockName, count: 10 }
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    disclosureContainer.innerHTML = `<div class="error">${data.error}</div>`;
+                } else {
+                    renderDisclosures(data.disclosures || [], disclosureContainer);
+                }
+                updateTimestamp();
+            } catch (e) {
+                disclosureContainer.innerHTML = `<div class="error">공시 조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        // 재무/공시 조회 (검색창에서 호출)
         async function searchFinancial() {
             const name = document.getElementById('financial-name').value.trim();
             if (!name) return;
@@ -1503,6 +1628,7 @@
                 if (document.getElementById('technical-code').value) searchTechnical();
             }
             else if (currentTab === 'financial') {
+                loadFinancialHoldings();
                 if (document.getElementById('financial-name').value) searchFinancial();
             }
         }
