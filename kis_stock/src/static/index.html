@@ -111,6 +111,14 @@
         .profit.positive { color: var(--accent-green); }
         .profit.negative { color: var(--accent-red); }
 
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin: 20px 0 12px 0;
+            padding-left: 4px;
+        }
+
         .stock-list {
             display: flex;
             flex-direction: column;
@@ -124,6 +132,12 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .stock-item:active {
+            background: #2a2a2a;
         }
 
         .stock-info h3 {
@@ -194,6 +208,7 @@
             background: var(--bg-card);
             border-radius: 16px;
             padding: 20px;
+            margin-bottom: 16px;
         }
 
         .price-card .name {
@@ -246,6 +261,7 @@
             background: var(--bg-card);
             border-radius: 16px;
             padding: 20px;
+            margin-bottom: 16px;
         }
 
         .investor-row {
@@ -340,6 +356,82 @@
             color: white;
         }
 
+        /* Action Sheet 스타일 */
+        .action-sheet-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 200;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+
+        .action-sheet-overlay.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .action-sheet {
+            background: var(--bg-secondary);
+            border-radius: 16px 16px 0 0;
+            width: 100%;
+            max-width: 500px;
+            padding: 16px 16px 32px 16px;
+            transform: translateY(100%);
+            transition: transform 0.3s;
+        }
+
+        .action-sheet-overlay.show .action-sheet {
+            transform: translateY(0);
+        }
+
+        .action-sheet-header {
+            text-align: center;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 8px;
+        }
+
+        .action-sheet-header h3 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .action-sheet-header .code {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .action-sheet-btn {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            font-size: 16px;
+            text-align: center;
+            cursor: pointer;
+            border-radius: 12px;
+            margin-top: 8px;
+        }
+
+        .action-sheet-btn:active {
+            background: #2a2a2a;
+        }
+
+        .action-sheet-btn.cancel {
+            color: var(--accent-red);
+            margin-top: 16px;
+        }
+
         .hidden { display: none !important; }
     </style>
 </head>
@@ -358,7 +450,7 @@
     <div class="content">
         <!-- 잔고 탭 -->
         <div id="balance-tab" class="tab-content">
-            <div class="market-toggle">
+            <div class="market-toggle" id="balance-market-toggle">
                 <button class="active" data-market="domestic">국내</button>
                 <button data-market="overseas">해외</button>
             </div>
@@ -374,7 +466,15 @@
                 <input type="text" id="stock-code" placeholder="종목코드 (예: 005930, AAPL)">
                 <button onclick="searchStock()">조회</button>
             </div>
-            <div id="price-content"></div>
+            <div id="price-search-result"></div>
+
+            <div class="market-toggle" id="price-market-toggle">
+                <button class="active" data-market="domestic">국내</button>
+                <button data-market="overseas">해외</button>
+            </div>
+            <div id="price-holdings-content">
+                <div class="loading">로딩 중</div>
+            </div>
         </div>
 
         <!-- 수급 탭 -->
@@ -383,7 +483,25 @@
                 <input type="text" id="investor-code" placeholder="종목코드 (예: 005930)">
                 <button onclick="searchInvestor()">조회</button>
             </div>
-            <div id="investor-content"></div>
+            <div id="investor-search-result"></div>
+
+            <div class="section-title">내 보유종목 (국내)</div>
+            <div id="investor-holdings-content">
+                <div class="loading">로딩 중</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Sheet -->
+    <div class="action-sheet-overlay" id="actionSheet" onclick="closeActionSheet(event)">
+        <div class="action-sheet" onclick="event.stopPropagation()">
+            <div class="action-sheet-header">
+                <h3 id="actionStockName">종목명</h3>
+                <div class="code" id="actionStockCode">종목코드</div>
+            </div>
+            <button class="action-sheet-btn" onclick="goToPrice()">📈 시세 조회</button>
+            <button class="action-sheet-btn" onclick="goToInvestor()">📊 수급 조회</button>
+            <button class="action-sheet-btn cancel" onclick="closeActionSheet()">취소</button>
         </div>
     </div>
 
@@ -392,7 +510,13 @@
     <script>
         const API_BASE = '';
         let currentTab = 'balance';
-        let currentMarket = 'domestic';
+        let currentBalanceMarket = 'domestic';
+        let currentPriceMarket = 'domestic';
+        let selectedStock = null;
+
+        // 캐시된 잔고 데이터
+        let cachedDomesticBalance = null;
+        let cachedOverseasBalance = null;
 
         // 숫자 포맷
         function formatNumber(num) {
@@ -425,17 +549,33 @@
                 document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
                 document.getElementById(currentTab + '-tab').classList.remove('hidden');
 
-                if (currentTab === 'balance') loadBalance();
+                if (currentTab === 'balance') {
+                    loadBalance();
+                } else if (currentTab === 'price') {
+                    loadPriceHoldings();
+                } else if (currentTab === 'investor') {
+                    loadInvestorHoldings();
+                }
             });
         });
 
-        // 마켓 토글
-        document.querySelectorAll('.market-toggle button').forEach(btn => {
+        // 잔고 마켓 토글
+        document.querySelectorAll('#balance-market-toggle button').forEach(btn => {
             btn.addEventListener('click', () => {
-                document.querySelectorAll('.market-toggle button').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('#balance-market-toggle button').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                currentMarket = btn.dataset.market;
+                currentBalanceMarket = btn.dataset.market;
                 loadBalance();
+            });
+        });
+
+        // 시세 마켓 토글
+        document.querySelectorAll('#price-market-toggle button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#price-market-toggle button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentPriceMarket = btn.dataset.market;
+                loadPriceHoldings();
             });
         });
 
@@ -445,7 +585,7 @@
             container.innerHTML = '<div class="loading">로딩 중</div>';
 
             try {
-                const endpoint = currentMarket === 'domestic' ? 'get_domestic_balance' : 'get_overseas_balance';
+                const endpoint = currentBalanceMarket === 'domestic' ? 'get_domestic_balance' : 'get_overseas_balance';
                 const res = await fetch('/call', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -459,10 +599,17 @@
                     return;
                 }
 
-                if (currentMarket === 'domestic') {
-                    renderDomesticBalance(data);
+                // 캐시 저장
+                if (currentBalanceMarket === 'domestic') {
+                    cachedDomesticBalance = data;
                 } else {
-                    renderOverseasBalance(data);
+                    cachedOverseasBalance = data;
+                }
+
+                if (currentBalanceMarket === 'domestic') {
+                    renderDomesticBalance(data, container, true);
+                } else {
+                    renderOverseasBalance(data, container, true);
                 }
 
                 updateTimestamp();
@@ -471,65 +618,75 @@
             }
         }
 
-        function renderDomesticBalance(data) {
-            const container = document.getElementById('balance-content');
-            const profitClass = getChangeClass(data.profit_loss);
+        function renderDomesticBalance(data, container, showSummary = true) {
+            let html = '';
 
-            let html = `
-                <div class="summary-card">
-                    <div class="label">총 자산</div>
-                    <div class="value">${formatCurrency(data.total_asset)}</div>
-                    <div class="profit ${profitClass}">
-                        ${formatCurrency(data.profit_loss)} (${formatPercent(data.profit_rate)})
-                    </div>
-                </div>
-                <div class="stock-list">
-            `;
-
-            data.holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
-                const changeClass = getChangeClass(stock.profit_rate);
+            if (showSummary) {
+                const profitClass = getChangeClass(data.profit_loss);
                 html += `
-                    <div class="stock-item">
-                        <div class="stock-info">
-                            <h3>${stock.stock_name}</h3>
-                            <div class="code">${stock.stock_code}</div>
-                            <div class="quantity">${formatNumber(stock.quantity)}주</div>
-                        </div>
-                        <div class="stock-price">
-                            <div class="current">${formatCurrency(stock.eval_amount)}</div>
-                            <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
+                    <div class="summary-card">
+                        <div class="label">총 자산</div>
+                        <div class="value">${formatCurrency(data.total_asset)}</div>
+                        <div class="profit ${profitClass}">
+                            ${formatCurrency(data.profit_loss)} (${formatPercent(data.profit_rate)})
                         </div>
                     </div>
                 `;
-            });
+            }
+
+            html += '<div class="stock-list">';
+
+            if (data.holdings && data.holdings.length > 0) {
+                data.holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
+                    const changeClass = getChangeClass(stock.profit_rate);
+                    html += `
+                        <div class="stock-item" onclick="showActionSheet('${stock.stock_name}', '${stock.stock_code}', 'domestic')">
+                            <div class="stock-info">
+                                <h3>${stock.stock_name}</h3>
+                                <div class="code">${stock.stock_code}</div>
+                                <div class="quantity">${formatNumber(stock.quantity)}주</div>
+                            </div>
+                            <div class="stock-price">
+                                <div class="current">${formatCurrency(stock.eval_amount)}</div>
+                                <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                html += '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목 없음</div>';
+            }
 
             html += '</div>';
             container.innerHTML = html;
         }
 
-        function renderOverseasBalance(data) {
-            const container = document.getElementById('balance-content');
-            const profitClass = getChangeClass(data.profit_rate);
+        function renderOverseasBalance(data, container, showSummary = true) {
+            let html = '';
 
-            let html = `
-                <div class="summary-card">
-                    <div class="label">총 자산</div>
-                    <div class="value">${formatCurrency(data.total_asset_usd, 'USD')}</div>
-                    <div class="profit ${profitClass}">
-                        ${formatCurrency(data.profit_loss_usd, 'USD')} (${formatPercent(data.profit_rate)})
+            if (showSummary) {
+                const profitClass = getChangeClass(data.profit_rate);
+                html += `
+                    <div class="summary-card">
+                        <div class="label">총 자산</div>
+                        <div class="value">${formatCurrency(data.total_asset_usd, 'USD')}</div>
+                        <div class="profit ${profitClass}">
+                            ${formatCurrency(data.profit_loss_usd, 'USD')} (${formatPercent(data.profit_rate)})
+                        </div>
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+                            환율: ${formatNumber(data.exchange_rate)}원/USD
+                        </div>
                     </div>
-                    <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
-                        환율: ${formatNumber(data.exchange_rate)}원/USD
-                    </div>
-                </div>
-                <div class="stock-list">
-            `;
+                `;
+            }
+
+            html += '<div class="stock-list">';
 
             if (data.holdings && data.holdings.length > 0) {
                 data.holdings.forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
-                        <div class="stock-item">
+                        <div class="stock-item" onclick="showActionSheet('${stock.stock_name}', '${stock.symbol}', 'overseas')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.symbol} · ${stock.exchange}</div>
@@ -550,12 +707,145 @@
             container.innerHTML = html;
         }
 
+        // 시세 탭 - 보유종목 로드
+        async function loadPriceHoldings() {
+            const container = document.getElementById('price-holdings-content');
+
+            const cached = currentPriceMarket === 'domestic' ? cachedDomesticBalance : cachedOverseasBalance;
+
+            if (cached) {
+                renderPriceHoldings(cached, container);
+                return;
+            }
+
+            container.innerHTML = '<div class="loading">로딩 중</div>';
+
+            try {
+                const endpoint = currentPriceMarket === 'domestic' ? 'get_domestic_balance' : 'get_overseas_balance';
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: endpoint, arguments: {} })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                // 캐시 저장
+                if (currentPriceMarket === 'domestic') {
+                    cachedDomesticBalance = data;
+                } else {
+                    cachedOverseasBalance = data;
+                }
+
+                renderPriceHoldings(data, container);
+            } catch (e) {
+                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        function renderPriceHoldings(data, container) {
+            const isOverseas = currentPriceMarket === 'overseas';
+            let html = '<div class="section-title">내 보유종목</div><div class="stock-list">';
+
+            const holdings = data.holdings || [];
+            if (holdings.length > 0) {
+                holdings.forEach(stock => {
+                    const code = isOverseas ? stock.symbol : stock.stock_code;
+                    const name = stock.stock_name;
+                    const changeClass = getChangeClass(stock.profit_rate);
+
+                    html += `
+                        <div class="stock-item" onclick="quickSearchStock('${code}', ${isOverseas})">
+                            <div class="stock-info">
+                                <h3>${name}</h3>
+                                <div class="code">${code}${isOverseas ? ' · ' + stock.exchange : ''}</div>
+                            </div>
+                            <div class="stock-price">
+                                <div class="current">${isOverseas ? formatCurrency(stock.current_price, 'USD') : formatCurrency(stock.current_price)}</div>
+                                <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                html += '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목 없음</div>';
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // 수급 탭 - 보유종목 로드
+        async function loadInvestorHoldings() {
+            const container = document.getElementById('investor-holdings-content');
+
+            if (cachedDomesticBalance) {
+                renderInvestorHoldings(cachedDomesticBalance, container);
+                return;
+            }
+
+            container.innerHTML = '<div class="loading">로딩 중</div>';
+
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: 'get_domestic_balance', arguments: {} })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                cachedDomesticBalance = data;
+                renderInvestorHoldings(data, container);
+            } catch (e) {
+                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        function renderInvestorHoldings(data, container) {
+            let html = '<div class="stock-list">';
+
+            const holdings = data.holdings || [];
+            if (holdings.length > 0) {
+                holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
+                    const changeClass = getChangeClass(stock.profit_rate);
+                    html += `
+                        <div class="stock-item" onclick="quickSearchInvestor('${stock.stock_code}')">
+                            <div class="stock-info">
+                                <h3>${stock.stock_name}</h3>
+                                <div class="code">${stock.stock_code}</div>
+                            </div>
+                            <div class="stock-price">
+                                <div class="current">${formatCurrency(stock.eval_amount)}</div>
+                                <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                html += '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목 없음</div>';
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
         // 시세 조회
         async function searchStock() {
             const code = document.getElementById('stock-code').value.trim();
             if (!code) return;
 
-            const container = document.getElementById('price-content');
+            const container = document.getElementById('price-search-result');
             container.innerHTML = '<div class="loading">조회 중</div>';
 
             const isOverseas = /^[A-Za-z]+$/.test(code);
@@ -567,7 +857,7 @@
                     body: JSON.stringify({
                         name: 'get_stock_price',
                         arguments: {
-                            stock_code: code,
+                            stock_code: code.toUpperCase(),
                             market: isOverseas ? 'overseas' : 'domestic'
                         }
                     })
@@ -580,15 +870,51 @@
                     return;
                 }
 
-                renderPrice(data, isOverseas);
+                renderPrice(data, isOverseas, container);
                 updateTimestamp();
             } catch (e) {
                 container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
             }
         }
 
-        function renderPrice(data, isOverseas) {
-            const container = document.getElementById('price-content');
+        // 빠른 시세 조회 (보유종목 클릭 시)
+        async function quickSearchStock(code, isOverseas) {
+            document.getElementById('stock-code').value = code;
+
+            const container = document.getElementById('price-search-result');
+            container.innerHTML = '<div class="loading">조회 중</div>';
+
+            // 스크롤 위로
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_stock_price',
+                        arguments: {
+                            stock_code: code.toUpperCase(),
+                            market: isOverseas ? 'overseas' : 'domestic'
+                        }
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                renderPrice(data, isOverseas, container);
+                updateTimestamp();
+            } catch (e) {
+                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        function renderPrice(data, isOverseas, container) {
             const changeClass = getChangeClass(data.change_rate);
 
             let price, change;
@@ -637,7 +963,7 @@
             const code = document.getElementById('investor-code').value.trim();
             if (!code) return;
 
-            const container = document.getElementById('investor-content');
+            const container = document.getElementById('investor-search-result');
             container.innerHTML = '<div class="loading">조회 중</div>';
 
             try {
@@ -657,16 +983,48 @@
                     return;
                 }
 
-                renderInvestor(data);
+                renderInvestor(data, container);
                 updateTimestamp();
             } catch (e) {
                 container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
             }
         }
 
-        function renderInvestor(data) {
-            const container = document.getElementById('investor-content');
+        // 빠른 수급 조회 (보유종목 클릭 시)
+        async function quickSearchInvestor(code) {
+            document.getElementById('investor-code').value = code;
 
+            const container = document.getElementById('investor-search-result');
+            container.innerHTML = '<div class="loading">조회 중</div>';
+
+            // 스크롤 위로
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_investor_trend',
+                        arguments: { stock_code: code }
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                renderInvestor(data, container);
+                updateTimestamp();
+            } catch (e) {
+                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        function renderInvestor(data, container) {
             const formatAmount = (val) => {
                 const sign = val >= 0 ? '+' : '';
                 return sign + formatNumber(val) + '주';
@@ -696,6 +1054,63 @@
             `;
         }
 
+        // Action Sheet
+        function showActionSheet(name, code, market) {
+            selectedStock = { name, code, market };
+            document.getElementById('actionStockName').textContent = name;
+            document.getElementById('actionStockCode').textContent = code;
+            document.getElementById('actionSheet').classList.add('show');
+        }
+
+        function closeActionSheet(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('actionSheet').classList.remove('show');
+        }
+
+        function goToPrice() {
+            closeActionSheet();
+            // 탭 전환
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelector('.tab[data-tab="price"]').classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            document.getElementById('price-tab').classList.remove('hidden');
+            currentTab = 'price';
+
+            // 마켓 토글 설정
+            const market = selectedStock.market;
+            document.querySelectorAll('#price-market-toggle button').forEach(b => {
+                b.classList.toggle('active', b.dataset.market === market);
+            });
+            currentPriceMarket = market;
+            loadPriceHoldings();
+
+            // 검색 실행
+            document.getElementById('stock-code').value = selectedStock.code;
+            searchStock();
+        }
+
+        function goToInvestor() {
+            closeActionSheet();
+
+            // 해외 종목은 수급 조회 불가
+            if (selectedStock.market === 'overseas') {
+                alert('해외 종목은 수급 조회가 지원되지 않습니다.');
+                return;
+            }
+
+            // 탭 전환
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelector('.tab[data-tab="investor"]').classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            document.getElementById('investor-tab').classList.remove('hidden');
+            currentTab = 'investor';
+            loadInvestorHoldings();
+
+            // 검색 실행
+            document.getElementById('investor-code').value = selectedStock.code;
+            searchInvestor();
+        }
+
         function updateTimestamp() {
             const now = new Date();
             document.getElementById('lastUpdate').textContent =
@@ -703,9 +1118,19 @@
         }
 
         function refresh() {
+            // 캐시 초기화
+            cachedDomesticBalance = null;
+            cachedOverseasBalance = null;
+
             if (currentTab === 'balance') loadBalance();
-            else if (currentTab === 'price') searchStock();
-            else if (currentTab === 'investor') searchInvestor();
+            else if (currentTab === 'price') {
+                loadPriceHoldings();
+                if (document.getElementById('stock-code').value) searchStock();
+            }
+            else if (currentTab === 'investor') {
+                loadInvestorHoldings();
+                if (document.getElementById('investor-code').value) searchInvestor();
+            }
         }
 
         // Enter 키 지원
