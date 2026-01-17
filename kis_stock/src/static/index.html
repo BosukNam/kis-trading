@@ -858,7 +858,7 @@
                 holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
-                        <div class="stock-item" onclick="quickSearchInvestor('${stock.stock_code}', '${stock.stock_name}')"
+                        <div class="stock-item" onclick="quickSearchInvestor('${stock.stock_code}', '${stock.stock_name}')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.stock_code}</div>
@@ -1221,7 +1221,7 @@
                 holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
-                        <div class="stock-item" onclick="quickSearchTechnical('${stock.stock_code}', '${stock.stock_name}')"
+                        <div class="stock-item" onclick="quickSearchTechnical('${stock.stock_code}', '${stock.stock_name}')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.stock_code}</div>
