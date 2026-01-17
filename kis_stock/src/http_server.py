@@ -5,19 +5,23 @@ import logging
 import sys
 import json
 import asyncio
-from typing import Optional
+from pathlib import Path
 from datetime import datetime
 
 from starlette.applications import Starlette
-from starlette.routing import Route
-from starlette.responses import JSONResponse, StreamingResponse, Response
+from starlette.routing import Route, Mount
+from starlette.responses import JSONResponse, StreamingResponse, Response, HTMLResponse, FileResponse
 from starlette.requests import Request
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.staticfiles import StaticFiles
 import uvicorn
 
 from .config import server_config, kis_config
 from .kis.client import get_kis_client
+
+# Static 파일 경로
+STATIC_DIR = Path(__file__).parent / "static"
 
 # 로깅 설정
 logging.basicConfig(
@@ -31,9 +35,14 @@ logger = logging.getLogger(__name__)
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     """Bearer Token 인증 미들웨어"""
 
+    # 인증 제외 경로
+    PUBLIC_PATHS = ["/health", "/", "/sse", "/app", "/call", "/tools"]
+
     async def dispatch(self, request: Request, call_next):
-        # 헬스체크 및 루트는 인증 제외
-        if request.url.path in ["/health", "/", "/sse"]:
+        path = request.url.path
+
+        # 공개 경로는 인증 제외
+        if path in self.PUBLIC_PATHS or path.startswith("/static"):
             return await call_next(request)
 
         # Bearer Token 검증
@@ -64,8 +73,25 @@ async def health(request: Request) -> JSONResponse:
     })
 
 
-async def root(request: Request) -> JSONResponse:
-    """루트 엔드포인트"""
+async def root(request: Request) -> Response:
+    """루트 - 모바일 웹 UI 제공"""
+    html_path = STATIC_DIR / "index.html"
+    if html_path.exists():
+        return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return JSONResponse({
+        "name": "KIS Stock MCP Server",
+        "version": "0.1.0",
+        "description": "한국투자증권 주식 정보 MCP 서버",
+    })
+
+
+async def app_page(request: Request) -> Response:
+    """앱 페이지 (루트와 동일)"""
+    return await root(request)
+
+
+async def api_info(request: Request) -> JSONResponse:
+    """API 정보"""
     return JSONResponse({
         "name": "KIS Stock MCP Server",
         "version": "0.1.0",
@@ -74,6 +100,7 @@ async def root(request: Request) -> JSONResponse:
             "health": "/health",
             "sse": "/sse",
             "tools": "/tools",
+            "call": "/call",
         },
     })
 
@@ -188,11 +215,17 @@ async def sse_endpoint(request: Request) -> StreamingResponse:
 # 라우트 정의
 routes = [
     Route("/", root),
+    Route("/app", app_page),
+    Route("/api", api_info),
     Route("/health", health),
     Route("/tools", list_tools),
     Route("/call", call_tool, methods=["POST"]),
     Route("/sse", sse_endpoint),
 ]
+
+# Static 파일 마운트 (존재하는 경우)
+if STATIC_DIR.exists():
+    routes.append(Mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static"))
 
 # Starlette 앱
 app = Starlette(
