@@ -1463,7 +1463,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: 'get_financial_ratio',
-                        arguments: { stock_code: stockCode }
+                        arguments: { stock_code: stockCode, stock_name: stockName }
                     })
                 });
 
@@ -1478,14 +1478,14 @@
                 resultContainer.innerHTML = `<div class="error">재무비율 조회 실패</div>`;
             }
 
-            // 공시 조회 (DART API)
+            // 공시 조회 (DART API) - stock_code 전달하여 corp_code로 1년치 조회
             try {
                 const res = await fetch('/call', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: 'get_disclosures',
-                        arguments: { stock_name: stockName, count: 30 }  // 더 많이 조회 후 필터링
+                        arguments: { stock_name: stockName, stock_code: stockCode, count: 10 }
                     })
                 });
 
@@ -1494,12 +1494,8 @@
                 if (data.error) {
                     disclosureContainer.innerHTML = `<div class="error">${data.error}</div>`;
                 } else {
-                    // 정확한 회사명으로 필터링 (부분 일치 검색 결과에서 정확한 것만)
-                    const filtered = (data.disclosures || []).filter(d =>
-                        d.corp_name === stockName ||
-                        d.corp_name.includes(stockName) && stockName.includes(d.corp_name.replace(/\(.*\)/, '').trim())
-                    ).slice(0, 10);
-                    renderDisclosures(filtered, disclosureContainer, stockName);
+                    // corp_code로 조회하면 정확한 회사만 반환되므로 필터링 불필요
+                    renderDisclosures(data.disclosures || [], disclosureContainer, stockName);
                 }
                 updateTimestamp();
             } catch (e) {
@@ -1520,11 +1516,15 @@
 
             // 재무비율 조회 (KIS API - 종목코드 필요하므로 잔고에서 찾기)
             let stockCode = null;
+            let stockName = name;
             if (cachedDomesticBalance) {
                 const found = cachedDomesticBalance.holdings.find(h =>
                     h.stock_name.includes(name) || name.includes(h.stock_name)
                 );
-                if (found) stockCode = found.stock_code;
+                if (found) {
+                    stockCode = found.stock_code;
+                    stockName = found.stock_name;
+                }
             }
 
             // 재무비율 조회 (종목코드가 있는 경우)
@@ -1535,7 +1535,7 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             name: 'get_financial_ratio',
-                            arguments: { stock_code: stockCode }
+                            arguments: { stock_code: stockCode, stock_name: stockName }
                         })
                     });
 
@@ -1553,14 +1553,16 @@
                 resultContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목에서 찾을 수 없습니다. 공시만 조회합니다.</div>';
             }
 
-            // 공시 조회 (DART API)
+            // 공시 조회 (DART API) - stock_code가 있으면 함께 전달
             try {
                 const res = await fetch('/call', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: 'get_disclosures',
-                        arguments: { stock_name: name, count: 30 }  // 더 많이 조회 후 필터링
+                        arguments: stockCode
+                            ? { stock_name: stockName, stock_code: stockCode, count: 10 }
+                            : { stock_name: name, count: 30 }
                     })
                 });
 
@@ -1568,8 +1570,11 @@
 
                 if (data.error) {
                     disclosureContainer.innerHTML = `<div class="error">${data.error}</div>`;
+                } else if (stockCode) {
+                    // corp_code로 조회하면 정확한 회사만 반환됨
+                    renderDisclosures(data.disclosures || [], disclosureContainer, stockName);
                 } else {
-                    // 정확한 회사명으로 필터링
+                    // 종목코드 없이 검색한 경우 필터링 필요
                     const filtered = (data.disclosures || []).filter(d =>
                         d.corp_name === name ||
                         d.corp_name.includes(name) && name.includes(d.corp_name.replace(/\(.*\)/, '').trim())
