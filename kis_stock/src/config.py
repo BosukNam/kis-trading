@@ -42,6 +42,24 @@ class ServerConfig:
 
 
 @dataclass
+class DARTConfig:
+    """DART OpenAPI 설정"""
+    api_key: str
+    base_url: str = "https://opendart.fss.or.kr/api"
+
+    @classmethod
+    def from_env(cls) -> "DARTConfig":
+        return cls(
+            api_key=os.getenv("DART_API_KEY", ""),
+            base_url=os.getenv("DART_BASE_URL", "https://opendart.fss.or.kr/api"),
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+
+@dataclass
 class GitHubOAuthConfig:
     """GitHub OAuth 설정"""
     client_id: str
@@ -67,4 +85,5 @@ class GitHubOAuthConfig:
 # 전역 설정 인스턴스
 kis_config = KISConfig.from_env()
 server_config = ServerConfig.from_env()
+dart_config = DARTConfig.from_env()
 github_config = GitHubOAuthConfig.from_env()

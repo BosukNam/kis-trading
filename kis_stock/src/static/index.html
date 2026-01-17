@@ -445,6 +445,8 @@
         <button class="tab active" data-tab="balance">잔고</button>
         <button class="tab" data-tab="price">시세</button>
         <button class="tab" data-tab="investor">수급</button>
+        <button class="tab" data-tab="technical">지표</button>
+        <button class="tab" data-tab="financial">재무</button>
     </div>
 
     <div class="content">
@@ -490,6 +492,32 @@
                 <div class="loading">로딩 중</div>
             </div>
         </div>
+
+        <!-- 기술지표 탭 -->
+        <div id="technical-tab" class="tab-content hidden">
+            <div class="search-box">
+                <input type="text" id="technical-code" placeholder="종목코드 (예: 005930)">
+                <button onclick="searchTechnical()">조회</button>
+            </div>
+            <div id="technical-search-result"></div>
+
+            <div class="section-title">내 보유종목 (국내)</div>
+            <div id="technical-holdings-content">
+                <div class="loading">로딩 중</div>
+            </div>
+        </div>
+
+        <!-- 재무/공시 탭 -->
+        <div id="financial-tab" class="tab-content hidden">
+            <div class="search-box">
+                <input type="text" id="financial-name" placeholder="종목명 (예: 삼성전자)">
+                <button onclick="searchFinancial()">조회</button>
+            </div>
+            <div id="financial-search-result"></div>
+
+            <div class="section-title">최근 공시</div>
+            <div id="disclosure-content"></div>
+        </div>
     </div>
 
     <!-- Action Sheet -->
@@ -501,6 +529,7 @@
             </div>
             <button class="action-sheet-btn" onclick="goToPrice()">📈 시세 조회</button>
             <button class="action-sheet-btn" onclick="goToInvestor()">📊 수급 조회</button>
+            <button class="action-sheet-btn" onclick="goToTechnical()">📉 기술지표</button>
             <button class="action-sheet-btn cancel" onclick="closeActionSheet()">취소</button>
         </div>
     </div>
@@ -555,6 +584,10 @@
                     loadPriceHoldings();
                 } else if (currentTab === 'investor') {
                     loadInvestorHoldings();
+                } else if (currentTab === 'technical') {
+                    loadTechnicalHoldings();
+                } else if (currentTab === 'financial') {
+                    // 재무/공시 탭은 검색 전용
                 }
             });
         });
@@ -1111,6 +1144,340 @@
             searchInvestor();
         }
 
+        function goToTechnical() {
+            closeActionSheet();
+
+            // 해외 종목은 기술지표 조회 불가
+            if (selectedStock.market === 'overseas') {
+                alert('해외 종목은 기술지표 조회가 지원되지 않습니다.');
+                return;
+            }
+
+            // 탭 전환
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelector('.tab[data-tab="technical"]').classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            document.getElementById('technical-tab').classList.remove('hidden');
+            currentTab = 'technical';
+            loadTechnicalHoldings();
+
+            // 검색 실행
+            document.getElementById('technical-code').value = selectedStock.code;
+            searchTechnical();
+        }
+
+        // 기술지표 탭 - 보유종목 로드
+        async function loadTechnicalHoldings() {
+            const container = document.getElementById('technical-holdings-content');
+
+            if (cachedDomesticBalance) {
+                renderTechnicalHoldings(cachedDomesticBalance, container);
+                return;
+            }
+
+            container.innerHTML = '<div class="loading">로딩 중</div>';
+
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: 'get_domestic_balance', arguments: {} })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                cachedDomesticBalance = data;
+                renderTechnicalHoldings(data, container);
+            } catch (e) {
+                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        function renderTechnicalHoldings(data, container) {
+            let html = '<div class="stock-list">';
+
+            const holdings = data.holdings || [];
+            if (holdings.length > 0) {
+                holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
+                    const changeClass = getChangeClass(stock.profit_rate);
+                    html += `
+                        <div class="stock-item" onclick="quickSearchTechnical('${stock.stock_code}')">
+                            <div class="stock-info">
+                                <h3>${stock.stock_name}</h3>
+                                <div class="code">${stock.stock_code}</div>
+                            </div>
+                            <div class="stock-price">
+                                <div class="current">${formatCurrency(stock.eval_amount)}</div>
+                                <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                html += '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목 없음</div>';
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // 기술지표 조회
+        async function searchTechnical() {
+            const code = document.getElementById('technical-code').value.trim();
+            if (!code) return;
+
+            const container = document.getElementById('technical-search-result');
+            container.innerHTML = '<div class="loading">조회 중</div>';
+
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_technical_indicators',
+                        arguments: { stock_code: code }
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                renderTechnical(data, container);
+                updateTimestamp();
+            } catch (e) {
+                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        async function quickSearchTechnical(code) {
+            document.getElementById('technical-code').value = code;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            await searchTechnical();
+        }
+
+        function renderTechnical(data, container) {
+            const getRsiClass = (rsi) => {
+                if (rsi >= 70) return 'negative';  // 과매수
+                if (rsi <= 30) return 'positive';  // 과매도
+                return '';
+            };
+
+            const rsiStatus = (rsi) => {
+                if (rsi >= 70) return '과매수';
+                if (rsi <= 30) return '과매도';
+                return '중립';
+            };
+
+            container.innerHTML = `
+                <div class="price-card">
+                    <div class="name">${data.stock_name}</div>
+                    <div class="code">${data.stock_code}</div>
+                    <div class="current-price">${formatCurrency(data.current_price)}</div>
+
+                    <div class="section-title" style="margin-top: 20px;">52주 고저</div>
+                    <div class="price-details" style="border-top: none; padding-top: 8px;">
+                        <div class="detail-item">
+                            <span class="label">52주 최고</span>
+                            <span class="value">${formatCurrency(data.high_52w)}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">최고 대비</span>
+                            <span class="value ${getChangeClass(data.from_high_52w)}">${formatPercent(data.from_high_52w)}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">52주 최저</span>
+                            <span class="value">${formatCurrency(data.low_52w)}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">최저 대비</span>
+                            <span class="value ${getChangeClass(data.from_low_52w)}">${formatPercent(data.from_low_52w)}</span>
+                        </div>
+                    </div>
+
+                    <div class="section-title" style="margin-top: 16px;">기술적 지표</div>
+                    <div class="price-details" style="border-top: none; padding-top: 8px;">
+                        <div class="detail-item">
+                            <span class="label">RSI (14)</span>
+                            <span class="value ${data.rsi_14 ? getRsiClass(data.rsi_14) : ''}">${data.rsi_14 ? data.rsi_14.toFixed(1) + ' (' + rsiStatus(data.rsi_14) + ')' : '-'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">변동성 (20일)</span>
+                            <span class="value">${data.volatility_20 ? data.volatility_20.toFixed(1) + '%' : '-'}</span>
+                        </div>
+                    </div>
+
+                    <div class="section-title" style="margin-top: 16px;">이동평균선</div>
+                    <div class="price-details" style="border-top: none; padding-top: 8px;">
+                        <div class="detail-item">
+                            <span class="label">5일</span>
+                            <span class="value ${data.ma_5 ? getChangeClass(data.current_price - data.ma_5) : ''}">${data.ma_5 ? formatCurrency(data.ma_5) : '-'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">20일</span>
+                            <span class="value ${data.ma_20 ? getChangeClass(data.current_price - data.ma_20) : ''}">${data.ma_20 ? formatCurrency(data.ma_20) : '-'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">60일</span>
+                            <span class="value ${data.ma_60 ? getChangeClass(data.current_price - data.ma_60) : ''}">${data.ma_60 ? formatCurrency(data.ma_60) : '-'}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 재무/공시 조회
+        async function searchFinancial() {
+            const name = document.getElementById('financial-name').value.trim();
+            if (!name) return;
+
+            const resultContainer = document.getElementById('financial-search-result');
+            const disclosureContainer = document.getElementById('disclosure-content');
+
+            resultContainer.innerHTML = '<div class="loading">재무정보 조회 중</div>';
+            disclosureContainer.innerHTML = '<div class="loading">공시 조회 중</div>';
+
+            // 재무비율 조회 (KIS API - 종목코드 필요하므로 잔고에서 찾기)
+            let stockCode = null;
+            if (cachedDomesticBalance) {
+                const found = cachedDomesticBalance.holdings.find(h =>
+                    h.stock_name.includes(name) || name.includes(h.stock_name)
+                );
+                if (found) stockCode = found.stock_code;
+            }
+
+            // 재무비율 조회 (종목코드가 있는 경우)
+            if (stockCode) {
+                try {
+                    const res = await fetch('/call', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: 'get_financial_ratio',
+                            arguments: { stock_code: stockCode }
+                        })
+                    });
+
+                    const data = await res.json();
+
+                    if (!data.error) {
+                        renderFinancialRatio(data, resultContainer);
+                    } else {
+                        resultContainer.innerHTML = `<div class="error">${data.error}</div>`;
+                    }
+                } catch (e) {
+                    resultContainer.innerHTML = `<div class="error">재무비율 조회 실패</div>`;
+                }
+            } else {
+                resultContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목에서 찾을 수 없습니다. 공시만 조회합니다.</div>';
+            }
+
+            // 공시 조회 (DART API)
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_disclosures',
+                        arguments: { stock_name: name, count: 10 }
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    disclosureContainer.innerHTML = `<div class="error">${data.error}</div>`;
+                } else {
+                    renderDisclosures(data.disclosures || [], disclosureContainer);
+                }
+                updateTimestamp();
+            } catch (e) {
+                disclosureContainer.innerHTML = `<div class="error">공시 조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        function renderFinancialRatio(data, container) {
+            const formatValue = (val, suffix = '') => val !== null && val !== undefined ? val.toFixed(2) + suffix : '-';
+
+            container.innerHTML = `
+                <div class="price-card">
+                    <div class="name">${data.stock_name}</div>
+                    <div class="code">${data.stock_code} · ${data.fiscal_year}</div>
+
+                    <div class="section-title" style="margin-top: 16px;">수익성</div>
+                    <div class="price-details" style="border-top: none; padding-top: 8px;">
+                        <div class="detail-item">
+                            <span class="label">ROE</span>
+                            <span class="value ${data.roe ? getChangeClass(data.roe) : ''}">${formatValue(data.roe, '%')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">EPS</span>
+                            <span class="value">${data.eps ? formatNumber(data.eps.toFixed(0)) + '원' : '-'}</span>
+                        </div>
+                    </div>
+
+                    <div class="section-title" style="margin-top: 16px;">성장성</div>
+                    <div class="price-details" style="border-top: none; padding-top: 8px;">
+                        <div class="detail-item">
+                            <span class="label">매출액증가율</span>
+                            <span class="value ${data.revenue_growth ? getChangeClass(data.revenue_growth) : ''}">${formatValue(data.revenue_growth, '%')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">영업이익증가율</span>
+                            <span class="value ${data.operating_profit_growth ? getChangeClass(data.operating_profit_growth) : ''}">${formatValue(data.operating_profit_growth, '%')}</span>
+                        </div>
+                    </div>
+
+                    <div class="section-title" style="margin-top: 16px;">밸류에이션</div>
+                    <div class="price-details" style="border-top: none; padding-top: 8px;">
+                        <div class="detail-item">
+                            <span class="label">PER</span>
+                            <span class="value">${formatValue(data.per)}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">PBR</span>
+                            <span class="value">${formatValue(data.pbr)}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">부채비율</span>
+                            <span class="value">${formatValue(data.debt_ratio, '%')}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderDisclosures(disclosures, container) {
+            if (!disclosures || disclosures.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">최근 공시 없음</div>';
+                return;
+            }
+
+            let html = '<div class="stock-list">';
+            disclosures.forEach(d => {
+                const date = d.rcept_dt ? `${d.rcept_dt.slice(0,4)}.${d.rcept_dt.slice(4,6)}.${d.rcept_dt.slice(6,8)}` : '';
+                html += `
+                    <div class="stock-item" onclick="window.open('https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${d.rcept_no}', '_blank')">
+                        <div class="stock-info">
+                            <h3 style="font-size: 13px;">${d.report_name}</h3>
+                            <div class="code">${d.corp_name} · ${date}</div>
+                        </div>
+                        <div style="color: var(--text-secondary); font-size: 20px;">→</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
         function updateTimestamp() {
             const now = new Date();
             document.getElementById('lastUpdate').textContent =
@@ -1131,6 +1498,13 @@
                 loadInvestorHoldings();
                 if (document.getElementById('investor-code').value) searchInvestor();
             }
+            else if (currentTab === 'technical') {
+                loadTechnicalHoldings();
+                if (document.getElementById('technical-code').value) searchTechnical();
+            }
+            else if (currentTab === 'financial') {
+                if (document.getElementById('financial-name').value) searchFinancial();
+            }
         }
 
         // Enter 키 지원
@@ -1139,6 +1513,12 @@
         });
         document.getElementById('investor-code').addEventListener('keypress', e => {
             if (e.key === 'Enter') searchInvestor();
+        });
+        document.getElementById('technical-code').addEventListener('keypress', e => {
+            if (e.key === 'Enter') searchTechnical();
+        });
+        document.getElementById('financial-name').addEventListener('keypress', e => {
+            if (e.key === 'Enter') searchFinancial();
         });
 
         // 초기 로드

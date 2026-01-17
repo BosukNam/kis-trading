@@ -23,8 +23,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 import uvicorn
 
-from .config import server_config, kis_config, github_config
+from .config import server_config, kis_config, github_config, dart_config
 from .kis.client import get_kis_client
+from .kis.dart_client import get_dart_client
 
 # Static 파일 경로
 STATIC_DIR = Path(__file__).parent / "static"
@@ -386,6 +387,26 @@ async def list_tools(request: Request) -> JSONResponse:
             "description": "투자자별 매매동향을 조회합니다.",
             "parameters": ["stock_code"],
         },
+        {
+            "name": "get_technical_indicators",
+            "description": "기술적 지표를 조회합니다. (52주 고저, RSI, 변동성, 이동평균)",
+            "parameters": ["stock_code"],
+        },
+        {
+            "name": "get_financial_ratio",
+            "description": "재무비율을 조회합니다. (ROE, 성장률, 부채비율 등)",
+            "parameters": ["stock_code"],
+        },
+        {
+            "name": "get_financial_statement",
+            "description": "재무제표/현금흐름표를 조회합니다. (DART)",
+            "parameters": ["stock_name", "year", "report_type"],
+        },
+        {
+            "name": "get_disclosures",
+            "description": "기업 공시 목록을 조회합니다. (DART)",
+            "parameters": ["stock_name", "count"],
+        },
     ]
     return JSONResponse({"tools": tools})
 
@@ -435,6 +456,54 @@ async def call_tool(request: Request) -> JSONResponse:
                 return JSONResponse(result.model_dump(mode="json"))
             else:
                 return JSONResponse({"error": "Trend data not found"}, status_code=404)
+
+        elif tool_name == "get_technical_indicators":
+            stock_code = arguments.get("stock_code", "")
+            result = await client.get_technical_indicators(stock_code)
+            if result:
+                return JSONResponse(result.model_dump(mode="json"))
+            else:
+                return JSONResponse({"error": "Technical data not found"}, status_code=404)
+
+        elif tool_name == "get_financial_ratio":
+            stock_code = arguments.get("stock_code", "")
+            result = await client.get_financial_ratio(stock_code)
+            if result:
+                return JSONResponse(result.model_dump(mode="json"))
+            else:
+                return JSONResponse({"error": "Financial ratio not found"}, status_code=404)
+
+        elif tool_name == "get_financial_statement":
+            stock_name = arguments.get("stock_name", "")
+            year = arguments.get("year", str(datetime.now().year - 1))
+            report_type = arguments.get("report_type", "11011")  # 사업보고서
+
+            dart_client = get_dart_client()
+            if not dart_config.enabled:
+                return JSONResponse({"error": "DART API not configured"}, status_code=500)
+
+            # 회사명으로 공시 검색하여 corp_code 획득
+            disclosures = await dart_client.get_disclosures(corp_name=stock_name, page_count=1)
+            if not disclosures:
+                return JSONResponse({"error": f"Company not found: {stock_name}"}, status_code=404)
+
+            corp_code = disclosures[0].corp_code
+            result = await dart_client.get_financial_statements(corp_code, year, report_type)
+            if result:
+                return JSONResponse(result.model_dump(mode="json"))
+            else:
+                return JSONResponse({"error": "Financial statement not found"}, status_code=404)
+
+        elif tool_name == "get_disclosures":
+            stock_name = arguments.get("stock_name", "")
+            count = arguments.get("count", 10)
+
+            dart_client = get_dart_client()
+            if not dart_config.enabled:
+                return JSONResponse({"error": "DART API not configured"}, status_code=500)
+
+            result = await dart_client.get_disclosures(corp_name=stock_name, page_count=count)
+            return JSONResponse({"disclosures": [d.model_dump(mode="json") for d in result]})
 
         else:
             return JSONResponse({"error": f"Unknown tool: {tool_name}"}, status_code=400)

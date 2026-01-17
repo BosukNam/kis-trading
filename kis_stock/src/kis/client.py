@@ -15,6 +15,9 @@ from .models import (
     OverseasBalanceInfo,
     OverseasBalanceItem,
     InvestorTrend,
+    DailyPrice,
+    TechnicalIndicators,
+    FinancialRatio,
 )
 
 logger = logging.getLogger(__name__)
@@ -344,6 +347,225 @@ class KISClient:
             individual_amount=self._safe_int(output.get("prsn_ntby_tr_pbmn")),
             foreign_amount=self._safe_int(output.get("frgn_ntby_tr_pbmn")),
             institution_amount=self._safe_int(output.get("orgn_ntby_tr_pbmn")),
+        )
+
+    async def get_daily_prices(
+        self, stock_code: str, period: str = "D", count: int = 100
+    ) -> List[DailyPrice]:
+        """일별/주별/월별 시세 조회
+
+        Args:
+            stock_code: 종목코드
+            period: D(일), W(주), M(월)
+            count: 조회 개수 (최대 100)
+        """
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=count * 2)).strftime("%Y%m%d")
+
+        data = await self._api_call(
+            "GET",
+            "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
+            "FHKST03010100",
+            params={
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": stock_code,
+                "FID_INPUT_DATE_1": start_date,
+                "FID_INPUT_DATE_2": end_date,
+                "FID_PERIOD_DIV_CODE": period,
+                "FID_ORG_ADJ_PRC": "0",  # 수정주가
+            },
+        )
+
+        if not data:
+            return []
+
+        prices = []
+        for item in data.get("output2", [])[:count]:
+            if not item.get("stck_bsop_date"):
+                continue
+            prices.append(
+                DailyPrice(
+                    date=item.get("stck_bsop_date", ""),
+                    open_price=self._safe_int(item.get("stck_oprc")),
+                    high_price=self._safe_int(item.get("stck_hgpr")),
+                    low_price=self._safe_int(item.get("stck_lwpr")),
+                    close_price=self._safe_int(item.get("stck_clpr")),
+                    volume=self._safe_int(item.get("acml_vol")),
+                    change_rate=self._safe_float(item.get("prdy_ctrt")),
+                )
+            )
+
+        return prices
+
+    def _calculate_rsi(self, prices: List[DailyPrice], period: int = 14) -> Optional[float]:
+        """RSI 계산"""
+        if len(prices) < period + 1:
+            return None
+
+        # 종가 기준 변화량 계산
+        changes = []
+        for i in range(1, len(prices)):
+            changes.append(prices[i - 1].close_price - prices[i].close_price)
+
+        if len(changes) < period:
+            return None
+
+        # 최근 period일간의 변화량
+        recent_changes = changes[:period]
+
+        gains = [c for c in recent_changes if c > 0]
+        losses = [-c for c in recent_changes if c < 0]
+
+        avg_gain = sum(gains) / period if gains else 0
+        avg_loss = sum(losses) / period if losses else 0
+
+        if avg_loss == 0:
+            return 100.0 if avg_gain > 0 else 50.0
+
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return round(rsi, 2)
+
+    def _calculate_volatility(self, prices: List[DailyPrice], period: int = 20) -> Optional[float]:
+        """변동성 계산 (일간 수익률의 표준편차 * sqrt(252))"""
+        if len(prices) < period + 1:
+            return None
+
+        # 일간 수익률 계산
+        returns = []
+        for i in range(1, min(period + 1, len(prices))):
+            if prices[i].close_price > 0:
+                daily_return = (prices[i - 1].close_price - prices[i].close_price) / prices[i].close_price
+                returns.append(daily_return)
+
+        if len(returns) < period:
+            return None
+
+        # 표준편차 계산
+        mean_return = sum(returns) / len(returns)
+        variance = sum((r - mean_return) ** 2 for r in returns) / len(returns)
+        std_dev = variance ** 0.5
+
+        # 연율화 (252 거래일)
+        annualized_vol = std_dev * (252 ** 0.5) * 100
+        return round(annualized_vol, 2)
+
+    def _calculate_ma(self, prices: List[DailyPrice], period: int) -> Optional[int]:
+        """이동평균 계산"""
+        if len(prices) < period:
+            return None
+
+        total = sum(p.close_price for p in prices[:period])
+        return int(total / period)
+
+    async def get_technical_indicators(self, stock_code: str) -> Optional[TechnicalIndicators]:
+        """기술적 지표 조회 (52주 고저, RSI, 변동성, 이동평균)"""
+        # 현재가 조회
+        price_data = await self.get_domestic_stock_price(stock_code)
+        if not price_data:
+            return None
+
+        # 일별 시세 조회 (최대 100일)
+        daily_prices = await self.get_daily_prices(stock_code, count=100)
+
+        # 52주 고저 계산 (약 250 거래일이지만 100일만 조회하므로 근사치)
+        # 더 정확한 52주 고저는 별도 API 필요
+        if daily_prices:
+            high_52w = max(p.high_price for p in daily_prices)
+            low_52w = min(p.low_price for p in daily_prices)
+            high_52w_date = next(
+                (p.date for p in daily_prices if p.high_price == high_52w), ""
+            )
+            low_52w_date = next(
+                (p.date for p in daily_prices if p.low_price == low_52w), ""
+            )
+        else:
+            high_52w = price_data.current_price
+            low_52w = price_data.current_price
+            high_52w_date = ""
+            low_52w_date = ""
+
+        current = price_data.current_price
+        from_high = ((current - high_52w) / high_52w * 100) if high_52w > 0 else 0
+        from_low = ((current - low_52w) / low_52w * 100) if low_52w > 0 else 0
+
+        # RSI 계산
+        rsi_14 = self._calculate_rsi(daily_prices, 14)
+
+        # 변동성 계산
+        volatility_20 = self._calculate_volatility(daily_prices, 20)
+
+        # 이동평균 계산
+        ma_5 = self._calculate_ma(daily_prices, 5)
+        ma_20 = self._calculate_ma(daily_prices, 20)
+        ma_60 = self._calculate_ma(daily_prices, 60)
+
+        return TechnicalIndicators(
+            stock_code=stock_code,
+            stock_name=price_data.stock_name,
+            current_price=current,
+            high_52w=high_52w,
+            low_52w=low_52w,
+            high_52w_date=high_52w_date,
+            low_52w_date=low_52w_date,
+            from_high_52w=round(from_high, 2),
+            from_low_52w=round(from_low, 2),
+            rsi_14=rsi_14,
+            volatility_20=volatility_20,
+            ma_5=ma_5,
+            ma_20=ma_20,
+            ma_60=ma_60,
+        )
+
+    async def get_financial_ratio(self, stock_code: str) -> Optional[FinancialRatio]:
+        """재무비율 조회"""
+        # 현재가 API에서 기본 정보 가져오기
+        price_data = await self.get_domestic_stock_price(stock_code)
+        if not price_data:
+            return None
+
+        # 재무비율 API 호출 (FHKST66430300 - 국내주식 재무비율)
+        data = await self._api_call(
+            "GET",
+            "/uapi/domestic-stock/v1/finance/financial-ratio",
+            "FHKST66430300",
+            params={
+                "FID_DIV_CLS_CODE": "0",
+                "fid_cond_mrkt_div_code": "J",
+                "fid_input_iscd": stock_code,
+            },
+        )
+
+        # 기본값 설정
+        fiscal_year = datetime.now().strftime("%Y")
+        roe = None
+        revenue_growth = None
+        op_profit_growth = None
+        net_income_growth = None
+        debt_ratio = None
+
+        if data and data.get("output"):
+            output = data["output"][0] if isinstance(data["output"], list) else data["output"]
+            fiscal_year = output.get("stac_yymm", fiscal_year)
+            roe = self._safe_float(output.get("roe_val")) or None
+            revenue_growth = self._safe_float(output.get("grs")) or None
+            op_profit_growth = self._safe_float(output.get("bsop_prfi_inrt")) or None
+            net_income_growth = self._safe_float(output.get("ntin_inrt")) or None
+            debt_ratio = self._safe_float(output.get("lblt_rate")) or None
+
+        return FinancialRatio(
+            stock_code=stock_code,
+            stock_name=price_data.stock_name,
+            fiscal_year=fiscal_year,
+            roe=roe,
+            revenue_growth=revenue_growth,
+            operating_profit_growth=op_profit_growth,
+            net_income_growth=net_income_growth,
+            debt_ratio=debt_ratio,
+            per=price_data.per,
+            pbr=price_data.pbr,
+            eps=price_data.eps,
+            bps=price_data.bps,
         )
 
 
