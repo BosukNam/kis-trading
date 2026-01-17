@@ -702,7 +702,7 @@
                 data.holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
-                        <div class="stock-item" onclick="showActionSheet('${stock.stock_name}', '${stock.stock_code}', 'domestic')">
+                        <div class="stock-item" onclick="showActionSheet('${stock.stock_name}', '${stock.stock_code}', 'domestic', '')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.stock_code}</div>
@@ -748,7 +748,7 @@
                 data.holdings.forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
-                        <div class="stock-item" onclick="showActionSheet('${stock.stock_name}', '${stock.symbol}', 'overseas')">
+                        <div class="stock-item" onclick="showActionSheet('${stock.stock_name}', '${stock.symbol}', 'overseas', '${stock.exchange}')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.symbol} · ${stock.exchange}</div>
@@ -1187,8 +1187,8 @@
         }
 
         // Action Sheet
-        function showActionSheet(name, code, market) {
-            selectedStock = { name, code, market };
+        function showActionSheet(name, code, market, exchange = '') {
+            selectedStock = { name, code, market, exchange };
             document.getElementById('actionStockName').textContent = name;
             document.getElementById('actionStockCode').textContent = code;
 
@@ -1261,7 +1261,7 @@
 
             // 검색 실행 (종목명 전달, 해외주식 포함)
             const isOverseas = selectedStock.market === 'overseas';
-            quickSearchTechnical(selectedStock.code, selectedStock.name, isOverseas);
+            quickSearchTechnical(selectedStock.code, selectedStock.name, isOverseas, selectedStock.exchange || 'NAS');
         }
 
         // 기술지표 탭 관련 변수
@@ -1325,11 +1325,13 @@
                 holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     const evalAmount = isOverseas ? formatCurrency(stock.eval_amount / 100, 'USD') : formatCurrency(stock.eval_amount);
+                    const stockCode = isOverseas ? stock.symbol : stock.stock_code;
+                    const exchange = isOverseas ? (stock.exchange || 'NAS') : '';
                     html += `
-                        <div class="stock-item" onclick="quickSearchTechnical('${stock.stock_code}', '${stock.stock_name}', ${isOverseas})">
+                        <div class="stock-item" onclick="quickSearchTechnical('${stockCode}', '${stock.stock_name}', ${isOverseas}, '${exchange}')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
-                                <div class="code">${stock.stock_code}</div>
+                                <div class="code">${stockCode}${isOverseas ? ' · ' + exchange : ''}</div>
                             </div>
                             <div class="stock-price">
                                 <div class="current">${evalAmount}</div>
@@ -1404,13 +1406,13 @@
             }
         }
 
-        async function quickSearchTechnical(code, stockName = '', isOverseas = false) {
+        async function quickSearchTechnical(code, stockName = '', isOverseas = false, exchange = 'NAS') {
             document.getElementById('technical-code').value = code;
             window.scrollTo({ top: 0, behavior: 'smooth' });
-            await searchTechnicalWithName(code, stockName, isOverseas);
+            await searchTechnicalWithName(code, stockName, isOverseas, exchange);
         }
 
-        async function searchTechnicalWithName(code, stockName, isOverseas = false) {
+        async function searchTechnicalWithName(code, stockName, isOverseas = false, exchange = 'NAS') {
             const container = document.getElementById('technical-search-result');
             container.innerHTML = '<div class="loading">조회 중</div>';
 
@@ -1418,7 +1420,7 @@
                 const args = { stock_code: code };
                 if (isOverseas) {
                     args.market = 'overseas';
-                    args.exchange = 'NAS';  // 기본값 나스닥
+                    args.exchange = exchange || 'NAS';
                 }
 
                 const res = await fetch('/call', {
