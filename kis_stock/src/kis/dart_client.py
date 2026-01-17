@@ -57,10 +57,15 @@ class DARTClient:
             response.raise_for_status()
             data = response.json()
 
-            if data.get("status") == "000":
+            status = data.get("status")
+            if status == "000":
                 return data
+            elif status == "013":
+                # 조회된 데이터가 없음
+                logger.info(f"DART API: No data found - {data.get('message', '')}")
+                return {"list": []}  # 빈 리스트 반환
             else:
-                logger.warning(f"DART API error: {data.get('message', 'Unknown')}")
+                logger.warning(f"DART API error [{status}]: {data.get('message', 'Unknown')}")
                 return None
 
         except Exception as e:
@@ -272,7 +277,9 @@ class DARTClient:
             # corp_code 없이 corp_name으로 검색 시 3개월 제한 적용
             params["corp_name"] = corp_name
 
+        logger.info(f"DART get_disclosures params: {params}")
         data = await self._api_call("/list.json", params)
+        logger.info(f"DART get_disclosures result: {len(data.get('list', [])) if data else 0} items")
 
         if not data or not data.get("list"):
             return []
