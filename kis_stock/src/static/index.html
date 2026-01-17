@@ -1485,7 +1485,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: 'get_disclosures',
-                        arguments: { stock_name: stockName, count: 10 }
+                        arguments: { stock_name: stockName, count: 30 }  // 더 많이 조회 후 필터링
                     })
                 });
 
@@ -1494,7 +1494,12 @@
                 if (data.error) {
                     disclosureContainer.innerHTML = `<div class="error">${data.error}</div>`;
                 } else {
-                    renderDisclosures(data.disclosures || [], disclosureContainer);
+                    // 정확한 회사명으로 필터링 (부분 일치 검색 결과에서 정확한 것만)
+                    const filtered = (data.disclosures || []).filter(d =>
+                        d.corp_name === stockName ||
+                        d.corp_name.includes(stockName) && stockName.includes(d.corp_name.replace(/\(.*\)/, '').trim())
+                    ).slice(0, 10);
+                    renderDisclosures(filtered, disclosureContainer, stockName);
                 }
                 updateTimestamp();
             } catch (e) {
@@ -1555,7 +1560,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: 'get_disclosures',
-                        arguments: { stock_name: name, count: 10 }
+                        arguments: { stock_name: name, count: 30 }  // 더 많이 조회 후 필터링
                     })
                 });
 
@@ -1564,7 +1569,12 @@
                 if (data.error) {
                     disclosureContainer.innerHTML = `<div class="error">${data.error}</div>`;
                 } else {
-                    renderDisclosures(data.disclosures || [], disclosureContainer);
+                    // 정확한 회사명으로 필터링
+                    const filtered = (data.disclosures || []).filter(d =>
+                        d.corp_name === name ||
+                        d.corp_name.includes(name) && name.includes(d.corp_name.replace(/\(.*\)/, '').trim())
+                    ).slice(0, 10);
+                    renderDisclosures(filtered, disclosureContainer, name);
                 }
                 updateTimestamp();
             } catch (e) {
@@ -1623,9 +1633,9 @@
             `;
         }
 
-        function renderDisclosures(disclosures, container) {
+        function renderDisclosures(disclosures, container, stockName = '') {
             if (!disclosures || disclosures.length === 0) {
-                container.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">최근 공시 없음</div>';
+                container.innerHTML = `<div style="text-align: center; padding: 20px; color: var(--text-secondary);">${stockName ? stockName + '의 ' : ''}최근 30일 공시 없음</div>`;
                 return;
             }
 
