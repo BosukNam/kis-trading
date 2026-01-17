@@ -497,12 +497,16 @@
         <!-- 기술지표 탭 -->
         <div id="technical-tab" class="tab-content hidden">
             <div class="search-box">
-                <input type="text" id="technical-code" placeholder="종목코드 또는 종목명 (예: 005930, 삼성전자)">
+                <input type="text" id="technical-code" placeholder="종목코드 또는 종목명 (예: 005930, AAPL)">
                 <button onclick="searchTechnical()">조회</button>
             </div>
             <div id="technical-search-result"></div>
 
-            <div class="section-title">내 보유종목 (국내)</div>
+            <div class="section-title">내 보유종목</div>
+            <div class="market-toggle" id="technical-market-toggle">
+                <button class="active" data-market="domestic">국내</button>
+                <button data-market="overseas">해외</button>
+            </div>
             <div id="technical-holdings-content">
                 <div class="loading">로딩 중</div>
             </div>
@@ -1260,22 +1264,38 @@
             quickSearchTechnical(selectedStock.code, selectedStock.name, isOverseas);
         }
 
+        // 기술지표 탭 관련 변수
+        let currentTechnicalMarket = 'domestic';
+
+        // 기술지표 마켓 토글 이벤트
+        document.getElementById('technical-market-toggle')?.addEventListener('click', (e) => {
+            if (e.target.tagName === 'BUTTON') {
+                document.querySelectorAll('#technical-market-toggle button').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                currentTechnicalMarket = e.target.dataset.market;
+                loadTechnicalHoldings();
+            }
+        });
+
         // 기술지표 탭 - 보유종목 로드
         async function loadTechnicalHoldings() {
             const container = document.getElementById('technical-holdings-content');
 
-            if (cachedDomesticBalance) {
-                renderTechnicalHoldings(cachedDomesticBalance, container);
+            const balance = currentTechnicalMarket === 'domestic' ? cachedDomesticBalance : cachedOverseasBalance;
+
+            if (balance) {
+                renderTechnicalHoldings(balance, container, currentTechnicalMarket);
                 return;
             }
 
             container.innerHTML = '<div class="loading">로딩 중</div>';
 
             try {
+                const endpoint = currentTechnicalMarket === 'domestic' ? 'get_domestic_balance' : 'get_overseas_balance';
                 const res = await fetch('/call', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: 'get_domestic_balance', arguments: {} })
+                    body: JSON.stringify({ name: endpoint, arguments: {} })
                 });
 
                 const data = await res.json();
@@ -1285,28 +1305,34 @@
                     return;
                 }
 
-                cachedDomesticBalance = data;
-                renderTechnicalHoldings(data, container);
+                if (currentTechnicalMarket === 'domestic') {
+                    cachedDomesticBalance = data;
+                } else {
+                    cachedOverseasBalance = data;
+                }
+                renderTechnicalHoldings(data, container, currentTechnicalMarket);
             } catch (e) {
                 container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
             }
         }
 
-        function renderTechnicalHoldings(data, container) {
+        function renderTechnicalHoldings(data, container, market = 'domestic') {
             let html = '<div class="stock-list">';
+            const isOverseas = market === 'overseas';
 
             const holdings = data.holdings || [];
             if (holdings.length > 0) {
                 holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
+                    const evalAmount = isOverseas ? formatCurrency(stock.eval_amount / 100, 'USD') : formatCurrency(stock.eval_amount);
                     html += `
-                        <div class="stock-item" onclick="quickSearchTechnical('${stock.stock_code}', '${stock.stock_name}')">
+                        <div class="stock-item" onclick="quickSearchTechnical('${stock.stock_code}', '${stock.stock_name}', ${isOverseas})">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.stock_code}</div>
                             </div>
                             <div class="stock-price">
-                                <div class="current">${formatCurrency(stock.eval_amount)}</div>
+                                <div class="current">${evalAmount}</div>
                                 <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
                             </div>
                         </div>
