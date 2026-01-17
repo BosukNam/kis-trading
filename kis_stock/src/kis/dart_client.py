@@ -1,7 +1,10 @@
 """DART OpenAPI 클라이언트"""
 
+import io
 import logging
-from datetime import datetime
+import zipfile
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
 import httpx
@@ -15,14 +18,14 @@ logger = logging.getLogger(__name__)
 class DARTClient:
     """DART OpenAPI 클라이언트"""
 
-    # 주요 기업 종목코드 -> DART 고유번호 매핑 (자주 사용되는 종목)
-    CORP_CODE_MAP: Dict[str, str] = {}
+    # 종목코드 -> DART 고유번호 매핑 캐시 (클래스 레벨)
+    _corp_code_cache: Dict[str, str] = {}
+    _corp_code_loaded: bool = False
 
     def __init__(self):
         self.api_key = dart_config.api_key
         self.base_url = dart_config.base_url
         self._client: Optional[httpx.AsyncClient] = None
-        self._corp_codes: Dict[str, str] = {}  # 종목코드 -> DART 고유번호
 
     async def _get_client(self) -> httpx.AsyncClient:
         """HTTP 클라이언트 반환"""
@@ -64,17 +67,58 @@ class DARTClient:
             logger.error(f"DART API call failed: {e}")
             return None
 
+    async def _load_corp_codes(self) -> bool:
+        """DART에서 기업코드 목록 다운로드 및 캐싱"""
+        if DARTClient._corp_code_loaded:
+            return True
+
+        if not self.api_key:
+            logger.warning("DART API key not configured")
+            return False
+
+        url = f"{self.base_url}/corpCode.xml"
+        params = {"crtfc_key": self.api_key}
+
+        client = await self._get_client()
+
+        try:
+            logger.info("Loading DART corp codes...")
+            response = await client.get(url, params=params, timeout=60.0)
+            response.raise_for_status()
+
+            # ZIP 파일 압축 해제
+            with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+                xml_content = zf.read("CORPCODE.xml")
+
+            # XML 파싱
+            root = ET.fromstring(xml_content)
+            count = 0
+            for item in root.findall("list"):
+                stock_code = item.findtext("stock_code", "").strip()
+                corp_code = item.findtext("corp_code", "").strip()
+                if stock_code and corp_code:
+                    DARTClient._corp_code_cache[stock_code] = corp_code
+                    count += 1
+
+            DARTClient._corp_code_loaded = True
+            logger.info(f"Loaded {count} corp codes from DART")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load corp codes: {e}")
+            return False
+
     async def get_corp_code(self, stock_code: str) -> Optional[str]:
         """종목코드로 DART 고유번호 조회"""
         # 캐시 확인
-        if stock_code in self._corp_codes:
-            return self._corp_codes[stock_code]
+        if stock_code in DARTClient._corp_code_cache:
+            return DARTClient._corp_code_cache[stock_code]
 
-        # corpCode.xml 다운로드는 무거우므로 직접 매핑 사용
-        # 실제 구현 시 corpCode.xml을 다운로드하여 매핑 테이블 구축 필요
-        # 여기서는 공시 검색 API로 우회
+        # 캐시에 없으면 로드 시도
+        if not DARTClient._corp_code_loaded:
+            await self._load_corp_codes()
 
-        return None
+        return DARTClient._corp_code_cache.get(stock_code)
 
     async def search_company(self, corp_name: str) -> Optional[str]:
         """회사명으로 DART 고유번호 검색"""
@@ -200,16 +244,19 @@ class DARTClient:
 
         Args:
             corp_code: DART 고유번호
-            corp_name: 회사명 (부분 일치)
+            corp_name: 회사명 (부분 일치, corp_code 없을 때만 사용)
             start_date: 시작일 (YYYYMMDD)
             end_date: 종료일 (YYYYMMDD)
             page_count: 조회 건수
         """
+        end_dt = datetime.now()
+
         if not start_date:
-            # 기본: 최근 3개월 (90일)
-            from datetime import timedelta
-            end_dt = datetime.now()
-            start_dt = end_dt - timedelta(days=90)
+            # corp_code가 있으면 1년, 없으면 3개월 (DART API 제한)
+            if corp_code:
+                start_dt = end_dt - timedelta(days=365)
+            else:
+                start_dt = end_dt - timedelta(days=90)
             start_date = start_dt.strftime("%Y%m%d")
             end_date = end_dt.strftime("%Y%m%d")
 
@@ -221,7 +268,8 @@ class DARTClient:
 
         if corp_code:
             params["corp_code"] = corp_code
-        if corp_name:
+        elif corp_name:
+            # corp_code 없이 corp_name으로 검색 시 3개월 제한 적용
             params["corp_name"] = corp_name
 
         data = await self._api_call("/list.json", params)
@@ -252,11 +300,22 @@ class DARTClient:
         page_count: int = 10,
     ) -> List[Disclosure]:
         """종목코드/종목명으로 공시 조회"""
-        # 종목명으로 검색 (종목코드로 직접 검색 불가)
-        return await self.get_disclosures(
-            corp_name=stock_name,
-            page_count=page_count,
-        )
+        # 종목코드로 corp_code 조회 시도
+        corp_code = await self.get_corp_code(stock_code)
+
+        if corp_code:
+            # corp_code가 있으면 1년치 조회 가능
+            return await self.get_disclosures(
+                corp_code=corp_code,
+                page_count=page_count,
+            )
+        else:
+            # corp_code가 없으면 종목명으로 3개월 조회
+            logger.warning(f"Corp code not found for {stock_code}, falling back to name search")
+            return await self.get_disclosures(
+                corp_name=stock_name,
+                page_count=page_count,
+            )
 
 
 # 전역 클라이언트 인스턴스 (싱글톤)
