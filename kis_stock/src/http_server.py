@@ -239,9 +239,14 @@ async def auth_login(request: Request) -> RedirectResponse:
     # state를 세션에 저장 (CSRF 방지)
     sessions[f"state:{state}"] = {"created_at": datetime.now().isoformat()}
 
+    # Railway 프록시 뒤에서 https 강제
+    callback_url = str(request.url_for("auth_callback"))
+    if callback_url.startswith("http://"):
+        callback_url = callback_url.replace("http://", "https://", 1)
+
     params = {
         "client_id": github_config.client_id,
-        "redirect_uri": str(request.url_for("auth_callback")),
+        "redirect_uri": callback_url,
         "scope": "read:user",
         "state": state,
     }
