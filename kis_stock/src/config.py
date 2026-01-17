@@ -41,6 +41,30 @@ class ServerConfig:
         )
 
 
+@dataclass
+class GitHubOAuthConfig:
+    """GitHub OAuth 설정"""
+    client_id: str
+    client_secret: str
+    allowed_users: list[str]
+    session_secret: str
+
+    @classmethod
+    def from_env(cls) -> "GitHubOAuthConfig":
+        allowed = os.getenv("ALLOWED_GITHUB_USERS", "")
+        return cls(
+            client_id=os.getenv("GITHUB_CLIENT_ID", ""),
+            client_secret=os.getenv("GITHUB_CLIENT_SECRET", ""),
+            allowed_users=[u.strip() for u in allowed.split(",") if u.strip()],
+            session_secret=os.getenv("SESSION_SECRET", os.getenv("MCP_BEARER_TOKEN", "default-secret")),
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.client_id and self.client_secret)
+
+
 # 전역 설정 인스턴스
 kis_config = KISConfig.from_env()
 server_config = ServerConfig.from_env()
+github_config = GitHubOAuthConfig.from_env()

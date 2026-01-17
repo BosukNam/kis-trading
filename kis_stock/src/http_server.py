@@ -1,23 +1,29 @@
-"""KIS MCP HTTP/SSE 서버 - Railway 배포용"""
+"""KIS MCP HTTP/SSE 서버 - Railway 배포용 (GitHub OAuth 인증)"""
 
 import os
 import logging
 import sys
 import json
 import asyncio
+import hashlib
+import hmac
+import base64
+import secrets
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
+import httpx
 from starlette.applications import Starlette
 from starlette.routing import Route, Mount
-from starlette.responses import JSONResponse, StreamingResponse, Response, HTMLResponse, FileResponse
+from starlette.responses import JSONResponse, StreamingResponse, Response, HTMLResponse, RedirectResponse
 from starlette.requests import Request
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 import uvicorn
 
-from .config import server_config, kis_config
+from .config import server_config, kis_config, github_config
 from .kis.client import get_kis_client
 
 # Static 파일 경로
@@ -31,36 +37,96 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 세션 저장소 (메모리 기반 - 프로덕션에서는 Redis 등 사용 권장)
+sessions: dict[str, dict] = {}
 
-class BearerAuthMiddleware(BaseHTTPMiddleware):
-    """Bearer Token 인증 미들웨어"""
+
+def sign_token(data: str, secret: str) -> str:
+    """토큰 서명"""
+    signature = hmac.new(secret.encode(), data.encode(), hashlib.sha256).hexdigest()
+    return f"{data}.{signature}"
+
+
+def verify_token(token: str, secret: str) -> str | None:
+    """토큰 검증"""
+    if "." not in token:
+        return None
+    data, signature = token.rsplit(".", 1)
+    expected = hmac.new(secret.encode(), data.encode(), hashlib.sha256).hexdigest()
+    if hmac.compare_digest(signature, expected):
+        return data
+    return None
+
+
+def create_session(username: str) -> str:
+    """세션 생성"""
+    session_id = secrets.token_urlsafe(32)
+    sessions[session_id] = {
+        "username": username,
+        "created_at": datetime.now().isoformat(),
+        "expires_at": (datetime.now() + timedelta(days=7)).isoformat(),
+    }
+    return sign_token(session_id, github_config.session_secret)
+
+
+def get_session(token: str) -> dict | None:
+    """세션 조회"""
+    session_id = verify_token(token, github_config.session_secret)
+    if not session_id:
+        return None
+    session = sessions.get(session_id)
+    if not session:
+        return None
+    if datetime.fromisoformat(session["expires_at"]) < datetime.now():
+        del sessions[session_id]
+        return None
+    return session
+
+
+def delete_session(token: str) -> None:
+    """세션 삭제"""
+    session_id = verify_token(token, github_config.session_secret)
+    if session_id and session_id in sessions:
+        del sessions[session_id]
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """인증 미들웨어"""
 
     # 인증 제외 경로
-    PUBLIC_PATHS = ["/health", "/", "/sse", "/app", "/call", "/tools"]
+    PUBLIC_PATHS = ["/health", "/auth/login", "/auth/callback", "/auth/logout", "/login", "/sse", "/api"]
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
+
+        # GitHub OAuth가 비활성화된 경우 모든 요청 허용
+        if not github_config.enabled:
+            return await call_next(request)
 
         # 공개 경로는 인증 제외
         if path in self.PUBLIC_PATHS or path.startswith("/static"):
             return await call_next(request)
 
-        # Bearer Token 검증
+        # MCP Bearer Token 인증 (API 호출용)
         auth_header = request.headers.get("Authorization", "")
-        expected_token = server_config.bearer_token
-
-        if expected_token:  # 토큰이 설정된 경우에만 검증
-            if not auth_header.startswith("Bearer "):
-                return JSONResponse(
-                    {"error": "Missing or invalid Authorization header"},
-                    status_code=401,
-                )
-
+        if auth_header.startswith("Bearer "):
             token = auth_header.split(" ", 1)[1]
-            if token != expected_token:
-                return JSONResponse({"error": "Invalid token"}, status_code=403)
+            if token == server_config.bearer_token:
+                return await call_next(request)
 
-        return await call_next(request)
+        # 세션 쿠키 확인
+        session_token = request.cookies.get("session")
+        if session_token:
+            session = get_session(session_token)
+            if session:
+                request.state.user = session["username"]
+                return await call_next(request)
+
+        # 인증되지 않은 요청 -> 로그인 페이지로 리다이렉트
+        if request.headers.get("Accept", "").startswith("text/html"):
+            return RedirectResponse("/login", status_code=302)
+
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
 
 async def health(request: Request) -> JSONResponse:
@@ -70,7 +136,196 @@ async def health(request: Request) -> JSONResponse:
         "service": "kis-mcp-server",
         "timestamp": datetime.now().isoformat(),
         "kis_configured": bool(kis_config.app_key),
+        "oauth_enabled": github_config.enabled,
     })
+
+
+async def login_page(request: Request) -> HTMLResponse:
+    """로그인 페이지"""
+    html = """
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KIS Stock - 로그인</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+        }
+        .login-card {
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            padding: 40px;
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+        .logo {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            color: #888;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }
+        .github-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            background: #fff;
+            color: #000;
+            padding: 14px 28px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 16px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .github-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(255,255,255,0.2);
+        }
+        .github-btn svg {
+            width: 24px;
+            height: 24px;
+        }
+        .footer {
+            margin-top: 32px;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="logo">📈</div>
+        <h1>KIS Stock</h1>
+        <p class="subtitle">한국투자증권 주식 정보 조회</p>
+        <a href="/auth/login" class="github-btn">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+            </svg>
+            GitHub로 로그인
+        </a>
+        <p class="footer">허가된 사용자만 접근 가능합니다</p>
+    </div>
+</body>
+</html>
+"""
+    return HTMLResponse(html)
+
+
+async def auth_login(request: Request) -> RedirectResponse:
+    """GitHub OAuth 로그인 시작"""
+    if not github_config.enabled:
+        return RedirectResponse("/", status_code=302)
+
+    state = secrets.token_urlsafe(16)
+    # state를 세션에 저장 (CSRF 방지)
+    sessions[f"state:{state}"] = {"created_at": datetime.now().isoformat()}
+
+    params = {
+        "client_id": github_config.client_id,
+        "redirect_uri": str(request.url_for("auth_callback")),
+        "scope": "read:user",
+        "state": state,
+    }
+    url = f"https://github.com/login/oauth/authorize?{urlencode(params)}"
+    return RedirectResponse(url, status_code=302)
+
+
+async def auth_callback(request: Request) -> Response:
+    """GitHub OAuth 콜백"""
+    if not github_config.enabled:
+        return RedirectResponse("/", status_code=302)
+
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    error = request.query_params.get("error")
+
+    if error:
+        return HTMLResponse(f"<h1>인증 오류</h1><p>{error}</p>", status_code=400)
+
+    # State 검증
+    state_key = f"state:{state}"
+    if state_key not in sessions:
+        return HTMLResponse("<h1>잘못된 요청</h1><p>State mismatch</p>", status_code=400)
+    del sessions[state_key]
+
+    # Access token 교환
+    async with httpx.AsyncClient() as client:
+        token_response = await client.post(
+            "https://github.com/login/oauth/access_token",
+            data={
+                "client_id": github_config.client_id,
+                "client_secret": github_config.client_secret,
+                "code": code,
+            },
+            headers={"Accept": "application/json"},
+        )
+        token_data = token_response.json()
+
+        if "error" in token_data:
+            return HTMLResponse(f"<h1>토큰 오류</h1><p>{token_data.get('error_description', token_data['error'])}</p>", status_code=400)
+
+        access_token = token_data["access_token"]
+
+        # 사용자 정보 조회
+        user_response = await client.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        user_data = user_response.json()
+        username = user_data["login"]
+
+    # 허용된 사용자 확인
+    if github_config.allowed_users and username not in github_config.allowed_users:
+        logger.warning(f"Unauthorized user attempted login: {username}")
+        return HTMLResponse(
+            f"<h1>접근 거부</h1><p>사용자 '{username}'은(는) 접근이 허용되지 않았습니다.</p>",
+            status_code=403
+        )
+
+    # 세션 생성
+    session_token = create_session(username)
+    logger.info(f"User logged in: {username}")
+
+    response = RedirectResponse("/", status_code=302)
+    response.set_cookie(
+        key="session",
+        value=session_token,
+        max_age=7 * 24 * 60 * 60,  # 7일
+        httponly=True,
+        secure=True,
+        samesite="lax",
+    )
+    return response
+
+
+async def auth_logout(request: Request) -> RedirectResponse:
+    """로그아웃"""
+    session_token = request.cookies.get("session")
+    if session_token:
+        delete_session(session_token)
+
+    response = RedirectResponse("/login", status_code=302)
+    response.delete_cookie("session")
+    return response
 
 
 async def root(request: Request) -> Response:
@@ -189,13 +444,10 @@ async def sse_endpoint(request: Request) -> StreamingResponse:
 
     async def event_generator():
         """SSE 이벤트 생성기"""
-        # 연결 확인 이벤트
         yield f"data: {json.dumps({'type': 'connected', 'server': 'kis-mcp-server'})}\n\n"
 
-        # 클라이언트 연결 유지
         while True:
             try:
-                # 30초마다 heartbeat
                 await asyncio.sleep(30)
                 yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.now().isoformat()})}\n\n"
             except asyncio.CancelledError:
@@ -218,6 +470,10 @@ routes = [
     Route("/app", app_page),
     Route("/api", api_info),
     Route("/health", health),
+    Route("/login", login_page),
+    Route("/auth/login", auth_login, name="auth_login"),
+    Route("/auth/callback", auth_callback, name="auth_callback"),
+    Route("/auth/logout", auth_logout),
     Route("/tools", list_tools),
     Route("/call", call_tool, methods=["POST"]),
     Route("/sse", sse_endpoint),
@@ -230,8 +486,8 @@ if STATIC_DIR.exists():
 # Starlette 앱
 app = Starlette(
     routes=routes,
-    middleware=[Middleware(BearerAuthMiddleware)],
-    on_startup=[lambda: logger.info("KIS MCP HTTP Server started")],
+    middleware=[Middleware(AuthMiddleware)],
+    on_startup=[lambda: logger.info(f"KIS MCP HTTP Server started (OAuth: {github_config.enabled})")],
 )
 
 
