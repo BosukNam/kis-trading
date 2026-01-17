@@ -1168,10 +1168,11 @@
             document.getElementById('actionStockName').textContent = name;
             document.getElementById('actionStockCode').textContent = code;
 
-            // 해외 종목은 수급/기술지표 버튼 숨기기
+            // 해외 종목은 수급 버튼만 숨기기 (기술지표는 지원)
             const isOverseas = market === 'overseas';
             document.getElementById('actionInvestorBtn').style.display = isOverseas ? 'none' : 'block';
-            document.getElementById('actionTechnicalBtn').style.display = isOverseas ? 'none' : 'block';
+            // 기술지표는 해외 종목도 지원
+            document.getElementById('actionTechnicalBtn').style.display = 'block';
 
             document.getElementById('actionSheet').classList.add('show');
         }
@@ -1226,11 +1227,6 @@
         function goToTechnical() {
             closeActionSheet();
 
-            // 해외 종목은 기술지표 조회 불가 (버튼이 숨겨져 있지만 방어 코드)
-            if (selectedStock.market === 'overseas') {
-                return;
-            }
-
             // 탭 전환
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelector('.tab[data-tab="technical"]').classList.add('active');
@@ -1239,8 +1235,9 @@
             currentTab = 'technical';
             loadTechnicalHoldings();
 
-            // 검색 실행 (종목명 전달)
-            quickSearchTechnical(selectedStock.code, selectedStock.name);
+            // 검색 실행 (종목명 전달, 해외주식 포함)
+            const isOverseas = selectedStock.market === 'overseas';
+            quickSearchTechnical(selectedStock.code, selectedStock.name, isOverseas);
         }
 
         // 기술지표 탭 - 보유종목 로드
@@ -1361,23 +1358,29 @@
             }
         }
 
-        async function quickSearchTechnical(code, stockName = '') {
+        async function quickSearchTechnical(code, stockName = '', isOverseas = false) {
             document.getElementById('technical-code').value = code;
             window.scrollTo({ top: 0, behavior: 'smooth' });
-            await searchTechnicalWithName(code, stockName);
+            await searchTechnicalWithName(code, stockName, isOverseas);
         }
 
-        async function searchTechnicalWithName(code, stockName) {
+        async function searchTechnicalWithName(code, stockName, isOverseas = false) {
             const container = document.getElementById('technical-search-result');
             container.innerHTML = '<div class="loading">조회 중</div>';
 
             try {
+                const args = { stock_code: code };
+                if (isOverseas) {
+                    args.market = 'overseas';
+                    args.exchange = 'NAS';  // 기본값 나스닥
+                }
+
                 const res = await fetch('/call', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: 'get_technical_indicators',
-                        arguments: { stock_code: code }
+                        arguments: args
                     })
                 });
 
@@ -1393,14 +1396,14 @@
                     data.stock_name = stockName;
                 }
 
-                renderTechnical(data, container);
+                renderTechnical(data, container, isOverseas);
                 updateTimestamp();
             } catch (e) {
                 container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
             }
         }
 
-        function renderTechnical(data, container) {
+        function renderTechnical(data, container, isOverseas = false) {
             const getRsiClass = (rsi) => {
                 if (rsi >= 70) return 'negative';  // 과매수
                 if (rsi <= 30) return 'positive';  // 과매도
@@ -1413,17 +1416,25 @@
                 return '중립';
             };
 
+            // 해외주식은 센트 단위이므로 100으로 나눠서 달러로 표시
+            const formatPrice = (price) => {
+                if (isOverseas) {
+                    return formatCurrency(price / 100, 'USD');
+                }
+                return formatCurrency(price);
+            };
+
             container.innerHTML = `
                 <div class="price-card">
                     <div class="name">${data.stock_name}</div>
-                    <div class="code">${data.stock_code}</div>
-                    <div class="current-price">${formatCurrency(data.current_price)}</div>
+                    <div class="code">${data.stock_code}${isOverseas ? ' (해외)' : ''}</div>
+                    <div class="current-price">${formatPrice(data.current_price)}</div>
 
                     <div class="section-title" style="margin-top: 20px;">52주 고저</div>
                     <div class="price-details" style="border-top: none; padding-top: 8px;">
                         <div class="detail-item">
                             <span class="label">52주 최고</span>
-                            <span class="value">${formatCurrency(data.high_52w)}</span>
+                            <span class="value">${formatPrice(data.high_52w)}</span>
                         </div>
                         <div class="detail-item">
                             <span class="label">최고 대비</span>
@@ -1431,7 +1442,7 @@
                         </div>
                         <div class="detail-item">
                             <span class="label">52주 최저</span>
-                            <span class="value">${formatCurrency(data.low_52w)}</span>
+                            <span class="value">${formatPrice(data.low_52w)}</span>
                         </div>
                         <div class="detail-item">
                             <span class="label">최저 대비</span>
@@ -1455,15 +1466,15 @@
                     <div class="price-details" style="border-top: none; padding-top: 8px;">
                         <div class="detail-item">
                             <span class="label">5일</span>
-                            <span class="value ${data.ma_5 ? getChangeClass(data.current_price - data.ma_5) : ''}">${data.ma_5 ? formatCurrency(data.ma_5) : '-'}</span>
+                            <span class="value ${data.ma_5 ? getChangeClass(data.current_price - data.ma_5) : ''}">${data.ma_5 ? formatPrice(data.ma_5) : '-'}</span>
                         </div>
                         <div class="detail-item">
                             <span class="label">20일</span>
-                            <span class="value ${data.ma_20 ? getChangeClass(data.current_price - data.ma_20) : ''}">${data.ma_20 ? formatCurrency(data.ma_20) : '-'}</span>
+                            <span class="value ${data.ma_20 ? getChangeClass(data.current_price - data.ma_20) : ''}">${data.ma_20 ? formatPrice(data.ma_20) : '-'}</span>
                         </div>
                         <div class="detail-item">
                             <span class="label">60일</span>
-                            <span class="value ${data.ma_60 ? getChangeClass(data.current_price - data.ma_60) : ''}">${data.ma_60 ? formatCurrency(data.ma_60) : '-'}</span>
+                            <span class="value ${data.ma_60 ? getChangeClass(data.current_price - data.ma_60) : ''}">${data.ma_60 ? formatPrice(data.ma_60) : '-'}</span>
                         </div>
                     </div>
                 </div>

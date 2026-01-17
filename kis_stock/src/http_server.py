@@ -459,7 +459,14 @@ async def call_tool(request: Request) -> JSONResponse:
 
         elif tool_name == "get_technical_indicators":
             stock_code = arguments.get("stock_code", "")
-            result = await client.get_technical_indicators(stock_code)
+            market = arguments.get("market", "domestic")
+            exchange = arguments.get("exchange", "NAS")
+
+            if market == "overseas":
+                result = await client.get_overseas_technical_indicators(stock_code.upper(), exchange)
+            else:
+                result = await client.get_technical_indicators(stock_code)
+
             if result:
                 return JSONResponse(result.model_dump(mode="json"))
             else:
