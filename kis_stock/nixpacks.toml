@@ -1,0 +1,8 @@
+[start]
+cmd = "python -m src.http_server"
+
+[phases.setup]
+nixPkgs = ["python311", "curl"]
+
+[phases.install]
+cmds = ["pip install ."]
