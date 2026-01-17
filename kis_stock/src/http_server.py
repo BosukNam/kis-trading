@@ -395,7 +395,7 @@ async def list_tools(request: Request) -> JSONResponse:
         {
             "name": "get_financial_ratio",
             "description": "재무비율을 조회합니다. (ROE, 성장률, 부채비율 등)",
-            "parameters": ["stock_code"],
+            "parameters": ["stock_code", "stock_name"],
         },
         {
             "name": "get_financial_statement",
@@ -405,7 +405,7 @@ async def list_tools(request: Request) -> JSONResponse:
         {
             "name": "get_disclosures",
             "description": "기업 공시 목록을 조회합니다. (DART)",
-            "parameters": ["stock_name", "count"],
+            "parameters": ["stock_name", "stock_code", "count"],
         },
     ]
     return JSONResponse({"tools": tools})
@@ -467,9 +467,14 @@ async def call_tool(request: Request) -> JSONResponse:
 
         elif tool_name == "get_financial_ratio":
             stock_code = arguments.get("stock_code", "")
+            stock_name = arguments.get("stock_name", "")
             result = await client.get_financial_ratio(stock_code)
             if result:
-                return JSONResponse(result.model_dump(mode="json"))
+                data = result.model_dump(mode="json")
+                # API 결과의 stock_name이 코드와 같거나 비어있으면 전달받은 값 사용
+                if stock_name and (not data.get("stock_name") or data.get("stock_name") == stock_code):
+                    data["stock_name"] = stock_name
+                return JSONResponse(data)
             else:
                 return JSONResponse({"error": "Financial ratio not found"}, status_code=404)
 
@@ -496,13 +501,22 @@ async def call_tool(request: Request) -> JSONResponse:
 
         elif tool_name == "get_disclosures":
             stock_name = arguments.get("stock_name", "")
+            stock_code = arguments.get("stock_code", "")
             count = arguments.get("count", 10)
 
             dart_client = get_dart_client()
             if not dart_config.enabled:
                 return JSONResponse({"error": "DART API not configured"}, status_code=500)
 
-            result = await dart_client.get_disclosures(corp_name=stock_name, page_count=count)
+            # stock_code가 있으면 corp_code 조회하여 1년치 공시 조회 가능
+            if stock_code:
+                result = await dart_client.get_disclosures_by_stock(
+                    stock_code=stock_code,
+                    stock_name=stock_name,
+                    page_count=count
+                )
+            else:
+                result = await dart_client.get_disclosures(corp_name=stock_name, page_count=count)
             return JSONResponse({"disclosures": [d.model_dump(mode="json") for d in result]})
 
         else:
