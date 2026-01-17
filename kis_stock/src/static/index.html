@@ -465,7 +465,7 @@
         <!-- 시세 탭 -->
         <div id="price-tab" class="tab-content hidden">
             <div class="search-box">
-                <input type="text" id="stock-code" placeholder="종목코드 (예: 005930, AAPL)">
+                <input type="text" id="stock-code" placeholder="종목코드 또는 종목명 (예: 005930, 삼성전자)">
                 <button onclick="searchStock()">조회</button>
             </div>
             <div id="price-search-result"></div>
@@ -482,7 +482,7 @@
         <!-- 수급 탭 -->
         <div id="investor-tab" class="tab-content hidden">
             <div class="search-box">
-                <input type="text" id="investor-code" placeholder="종목코드 (예: 005930)">
+                <input type="text" id="investor-code" placeholder="종목코드 또는 종목명 (예: 005930, 삼성전자)">
                 <button onclick="searchInvestor()">조회</button>
             </div>
             <div id="investor-search-result"></div>
@@ -496,7 +496,7 @@
         <!-- 기술지표 탭 -->
         <div id="technical-tab" class="tab-content hidden">
             <div class="search-box">
-                <input type="text" id="technical-code" placeholder="종목코드 (예: 005930)">
+                <input type="text" id="technical-code" placeholder="종목코드 또는 종목명 (예: 005930, 삼성전자)">
                 <button onclick="searchTechnical()">조회</button>
             </div>
             <div id="technical-search-result"></div>
@@ -533,8 +533,8 @@
                 <div class="code" id="actionStockCode">종목코드</div>
             </div>
             <button class="action-sheet-btn" onclick="goToPrice()">📈 시세 조회</button>
-            <button class="action-sheet-btn" onclick="goToInvestor()">📊 수급 조회</button>
-            <button class="action-sheet-btn" onclick="goToTechnical()">📉 기술지표</button>
+            <button class="action-sheet-btn" id="actionInvestorBtn" onclick="goToInvestor()">📊 수급 조회</button>
+            <button class="action-sheet-btn" id="actionTechnicalBtn" onclick="goToTechnical()">📉 기술지표</button>
             <button class="action-sheet-btn cancel" onclick="closeActionSheet()">취소</button>
         </div>
     </div>
@@ -880,13 +880,42 @@
 
         // 시세 조회
         async function searchStock() {
-            const code = document.getElementById('stock-code').value.trim();
-            if (!code) return;
+            const input = document.getElementById('stock-code').value.trim();
+            if (!input) return;
 
             const container = document.getElementById('price-search-result');
             container.innerHTML = '<div class="loading">조회 중</div>';
 
-            const isOverseas = /^[A-Za-z]+$/.test(code);
+            // 한글이 포함되어 있으면 보유종목에서 검색
+            const hasKorean = /[가-힣]/.test(input);
+            let code = input;
+            let stockName = '';
+            let isOverseas = /^[A-Za-z]+$/.test(input);
+
+            if (hasKorean) {
+                // 국내 보유종목에서 검색
+                let found = null;
+                if (cachedDomesticBalance) {
+                    found = cachedDomesticBalance.holdings.find(h =>
+                        h.stock_name.includes(input) || input.includes(h.stock_name)
+                    );
+                }
+                // 해외 보유종목에서도 검색
+                if (!found && cachedOverseasBalance) {
+                    found = cachedOverseasBalance.holdings.find(h =>
+                        h.stock_name.includes(input) || input.includes(h.stock_name)
+                    );
+                    if (found) isOverseas = true;
+                }
+
+                if (found) {
+                    code = found.stock_code;
+                    stockName = found.stock_name;
+                } else {
+                    container.innerHTML = '<div class="error">보유 종목에서 찾을 수 없습니다. 종목코드로 검색하세요.</div>';
+                    return;
+                }
+            }
 
             try {
                 const res = await fetch('/call', {
@@ -906,6 +935,11 @@
                 if (data.error) {
                     container.innerHTML = `<div class="error">${data.error}</div>`;
                     return;
+                }
+
+                // 종목명 설정
+                if (stockName && (!data.stock_name || data.stock_name === data.stock_code)) {
+                    data.stock_name = stockName;
                 }
 
                 renderPrice(data, isOverseas, container);
@@ -1003,11 +1037,32 @@
 
         // 투자자 동향 조회
         async function searchInvestor() {
-            const code = document.getElementById('investor-code').value.trim();
-            if (!code) return;
+            const input = document.getElementById('investor-code').value.trim();
+            if (!input) return;
 
             const container = document.getElementById('investor-search-result');
             container.innerHTML = '<div class="loading">조회 중</div>';
+
+            // 한글이 포함되어 있으면 보유종목에서 검색
+            const hasKorean = /[가-힣]/.test(input);
+            let code = input;
+            let stockName = '';
+
+            if (hasKorean) {
+                let found = null;
+                if (cachedDomesticBalance) {
+                    found = cachedDomesticBalance.holdings.find(h =>
+                        h.stock_name.includes(input) || input.includes(h.stock_name)
+                    );
+                }
+                if (found) {
+                    code = found.stock_code;
+                    stockName = found.stock_name;
+                } else {
+                    container.innerHTML = '<div class="error">보유 종목에서 찾을 수 없습니다. 종목코드로 검색하세요.</div>';
+                    return;
+                }
+            }
 
             try {
                 const res = await fetch('/call', {
@@ -1024,6 +1079,11 @@
                 if (data.error) {
                     container.innerHTML = `<div class="error">${data.error}</div>`;
                     return;
+                }
+
+                // 종목명 설정
+                if (stockName && (!data.stock_name || data.stock_name === data.stock_code)) {
+                    data.stock_name = stockName;
                 }
 
                 renderInvestor(data, container);
@@ -1107,6 +1167,12 @@
             selectedStock = { name, code, market };
             document.getElementById('actionStockName').textContent = name;
             document.getElementById('actionStockCode').textContent = code;
+
+            // 해외 종목은 수급/기술지표 버튼 숨기기
+            const isOverseas = market === 'overseas';
+            document.getElementById('actionInvestorBtn').style.display = isOverseas ? 'none' : 'block';
+            document.getElementById('actionTechnicalBtn').style.display = isOverseas ? 'none' : 'block';
+
             document.getElementById('actionSheet').classList.add('show');
         }
 
@@ -1132,17 +1198,16 @@
             currentPriceMarket = market;
             loadPriceHoldings();
 
-            // 검색 실행
-            document.getElementById('stock-code').value = selectedStock.code;
-            searchStock();
+            // 검색 실행 (종목명 전달)
+            const isOverseas = market === 'overseas';
+            quickSearchStock(selectedStock.code, isOverseas, selectedStock.name);
         }
 
         function goToInvestor() {
             closeActionSheet();
 
-            // 해외 종목은 수급 조회 불가
+            // 해외 종목은 수급 조회 불가 (버튼이 숨겨져 있지만 방어 코드)
             if (selectedStock.market === 'overseas') {
-                alert('해외 종목은 수급 조회가 지원되지 않습니다.');
                 return;
             }
 
@@ -1154,17 +1219,15 @@
             currentTab = 'investor';
             loadInvestorHoldings();
 
-            // 검색 실행
-            document.getElementById('investor-code').value = selectedStock.code;
-            searchInvestor();
+            // 검색 실행 (종목명 전달)
+            quickSearchInvestor(selectedStock.code, selectedStock.name);
         }
 
         function goToTechnical() {
             closeActionSheet();
 
-            // 해외 종목은 기술지표 조회 불가
+            // 해외 종목은 기술지표 조회 불가 (버튼이 숨겨져 있지만 방어 코드)
             if (selectedStock.market === 'overseas') {
-                alert('해외 종목은 기술지표 조회가 지원되지 않습니다.');
                 return;
             }
 
@@ -1176,9 +1239,8 @@
             currentTab = 'technical';
             loadTechnicalHoldings();
 
-            // 검색 실행
-            document.getElementById('technical-code').value = selectedStock.code;
-            searchTechnical();
+            // 검색 실행 (종목명 전달)
+            quickSearchTechnical(selectedStock.code, selectedStock.name);
         }
 
         // 기술지표 탭 - 보유종목 로드
@@ -1243,11 +1305,32 @@
 
         // 기술지표 조회
         async function searchTechnical() {
-            const code = document.getElementById('technical-code').value.trim();
-            if (!code) return;
+            const input = document.getElementById('technical-code').value.trim();
+            if (!input) return;
 
             const container = document.getElementById('technical-search-result');
             container.innerHTML = '<div class="loading">조회 중</div>';
+
+            // 한글이 포함되어 있으면 보유종목에서 검색
+            const hasKorean = /[가-힣]/.test(input);
+            let code = input;
+            let stockName = '';
+
+            if (hasKorean) {
+                let found = null;
+                if (cachedDomesticBalance) {
+                    found = cachedDomesticBalance.holdings.find(h =>
+                        h.stock_name.includes(input) || input.includes(h.stock_name)
+                    );
+                }
+                if (found) {
+                    code = found.stock_code;
+                    stockName = found.stock_name;
+                } else {
+                    container.innerHTML = '<div class="error">보유 종목에서 찾을 수 없습니다. 종목코드로 검색하세요.</div>';
+                    return;
+                }
+            }
 
             try {
                 const res = await fetch('/call', {
@@ -1264,6 +1347,11 @@
                 if (data.error) {
                     container.innerHTML = `<div class="error">${data.error}</div>`;
                     return;
+                }
+
+                // 종목명 설정
+                if (stockName && (!data.stock_name || data.stock_name === data.stock_code)) {
+                    data.stock_name = stockName;
                 }
 
                 renderTechnical(data, container);
@@ -1574,10 +1662,9 @@
                     // corp_code로 조회하면 정확한 회사만 반환됨
                     renderDisclosures(data.disclosures || [], disclosureContainer, stockName);
                 } else {
-                    // 종목코드 없이 검색한 경우 필터링 필요
+                    // 종목코드 없이 검색한 경우 - 검색어가 포함된 공시 표시
                     const filtered = (data.disclosures || []).filter(d =>
-                        d.corp_name === name ||
-                        d.corp_name.includes(name) && name.includes(d.corp_name.replace(/\(.*\)/, '').trim())
+                        d.corp_name.includes(name) || name.includes(d.corp_name)
                     ).slice(0, 10);
                     renderDisclosures(filtered, disclosureContainer, name);
                 }
