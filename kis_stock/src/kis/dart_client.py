@@ -206,10 +206,10 @@ class DARTClient:
             page_count: 조회 건수
         """
         if not start_date:
-            # 기본: 최근 30일
+            # 기본: 최근 3개월 (90일)
             from datetime import timedelta
             end_dt = datetime.now()
-            start_dt = end_dt - timedelta(days=30)
+            start_dt = end_dt - timedelta(days=90)
             start_date = start_dt.strftime("%Y%m%d")
             end_date = end_dt.strftime("%Y%m%d")
 
