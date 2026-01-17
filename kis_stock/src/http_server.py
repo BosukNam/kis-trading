@@ -23,9 +23,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 import uvicorn
 
-from .config import server_config, kis_config, github_config, dart_config
+from .config import server_config, kis_config, github_config, dart_config, naver_config
 from .kis.client import get_kis_client
 from .kis.dart_client import get_dart_client
+from .kis.naver_client import get_naver_client
 
 # Static 파일 경로
 STATIC_DIR = Path(__file__).parent / "static"
@@ -459,7 +460,14 @@ async def call_tool(request: Request) -> JSONResponse:
 
         elif tool_name == "get_technical_indicators":
             stock_code = arguments.get("stock_code", "")
-            result = await client.get_technical_indicators(stock_code)
+            market = arguments.get("market", "domestic")
+            exchange = arguments.get("exchange", "NAS")
+
+            if market == "overseas":
+                result = await client.get_overseas_technical_indicators(stock_code.upper(), exchange)
+            else:
+                result = await client.get_technical_indicators(stock_code)
+
             if result:
                 return JSONResponse(result.model_dump(mode="json"))
             else:
@@ -516,8 +524,37 @@ async def call_tool(request: Request) -> JSONResponse:
                     page_count=count
                 )
             else:
-                result = await dart_client.get_disclosures(corp_name=stock_name, page_count=count)
+                # stock_code 없을 때: 회사명으로 먼저 corp_code 검색 시도 (정확한 매칭)
+                corp_code = await dart_client.get_corp_code_by_name(stock_name)
+                if corp_code:
+                    # 정확히 매칭되는 회사가 있으면 1년치 조회
+                    logger.info(f"Found corp_code {corp_code} for '{stock_name}'")
+                    result = await dart_client.get_disclosures(corp_code=corp_code, page_count=count)
+                else:
+                    # 매칭되지 않으면 부분 검색 (3개월 제한)
+                    result = await dart_client.get_disclosures(corp_name=stock_name, page_count=count)
             return JSONResponse({"disclosures": [d.model_dump(mode="json") for d in result]})
+
+        elif tool_name == "get_stock_news":
+            stock_name = arguments.get("stock_name", "")
+            count = arguments.get("count", 10)
+
+            if not naver_config.enabled:
+                return JSONResponse({"error": "Naver API not configured", "news": []})
+
+            naver_client = get_naver_client()
+            result = await naver_client.search_stock_news(stock_name, count=count)
+            return JSONResponse({
+                "news": [
+                    {
+                        "title": item.title,
+                        "link": item.link,
+                        "description": item.description,
+                        "pub_date": item.pub_date_formatted,
+                    }
+                    for item in result
+                ]
+            })
 
         else:
             return JSONResponse({"error": f"Unknown tool: {tool_name}"}, status_code=400)

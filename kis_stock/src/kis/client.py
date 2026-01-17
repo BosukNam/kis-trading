@@ -568,6 +568,127 @@ class KISClient:
             bps=price_data.bps,
         )
 
+    async def get_overseas_daily_prices(
+        self, symbol: str, exchange: str = "NAS", count: int = 100
+    ) -> List[DailyPrice]:
+        """해외주식 일별 시세 조회
+
+        Args:
+            symbol: 종목 심볼 (예: AAPL, TSLA)
+            exchange: 거래소 코드 (NAS: 나스닥, NYS: 뉴욕, AMS: 아멕스)
+            count: 조회 개수 (최대 100)
+        """
+        end_date = datetime.now().strftime("%Y%m%d")
+
+        # 해외주식 기간별시세 API (FHKST03030100)
+        data = await self._api_call(
+            "GET",
+            "/uapi/overseas-price/v1/quotations/dailyprice",
+            "FHKST03030100",
+            params={
+                "AUTH": "",
+                "EXCD": exchange,
+                "SYMB": symbol.upper(),
+                "GUBN": "0",  # 0: 일봉
+                "BYMD": end_date,
+                "MODP": "1",  # 수정주가 반영
+            },
+        )
+
+        if not data:
+            return []
+
+        prices = []
+        for item in data.get("output2", [])[:count]:
+            if not item.get("xymd"):
+                continue
+            prices.append(
+                DailyPrice(
+                    date=item.get("xymd", ""),
+                    open_price=int(self._safe_float(item.get("open", 0)) * 100),
+                    high_price=int(self._safe_float(item.get("high", 0)) * 100),
+                    low_price=int(self._safe_float(item.get("low", 0)) * 100),
+                    close_price=int(self._safe_float(item.get("clos", 0)) * 100),
+                    volume=self._safe_int(item.get("tvol")),
+                    change_rate=self._safe_float(item.get("rate")),
+                )
+            )
+
+        return prices
+
+    async def get_overseas_technical_indicators(
+        self, symbol: str, exchange: str = "NAS"
+    ) -> Optional[TechnicalIndicators]:
+        """해외주식 기술적 지표 조회 (52주 고저, RSI, 변동성, 이동평균)"""
+        # 현재가 조회
+        price_data = await self.get_overseas_stock_price(symbol, exchange)
+        if not price_data:
+            return None
+
+        # 일별 시세 조회 (최대 100일)
+        daily_prices = await self.get_overseas_daily_prices(symbol, exchange, count=100)
+
+        if not daily_prices:
+            # 일별 시세 조회 실패 시 현재가 기반으로 기본 지표만 반환
+            return TechnicalIndicators(
+                stock_code=symbol,
+                stock_name=price_data.stock_name,
+                current_price=price_data.current_price,
+                high_52w=price_data.current_price,
+                low_52w=price_data.current_price,
+                high_52w_date="",
+                low_52w_date="",
+                from_high_52w=0.0,
+                from_low_52w=0.0,
+                rsi_14=None,
+                volatility_20=None,
+                ma_5=None,
+                ma_20=None,
+                ma_60=None,
+            )
+
+        # 52주 고저 계산
+        high_52w = max(p.high_price for p in daily_prices)
+        low_52w = min(p.low_price for p in daily_prices)
+        high_52w_date = next(
+            (p.date for p in daily_prices if p.high_price == high_52w), ""
+        )
+        low_52w_date = next(
+            (p.date for p in daily_prices if p.low_price == low_52w), ""
+        )
+
+        current = price_data.current_price
+        from_high = ((current - high_52w) / high_52w * 100) if high_52w > 0 else 0
+        from_low = ((current - low_52w) / low_52w * 100) if low_52w > 0 else 0
+
+        # RSI 계산
+        rsi_14 = self._calculate_rsi(daily_prices, 14)
+
+        # 변동성 계산
+        volatility_20 = self._calculate_volatility(daily_prices, 20)
+
+        # 이동평균 계산
+        ma_5 = self._calculate_ma(daily_prices, 5)
+        ma_20 = self._calculate_ma(daily_prices, 20)
+        ma_60 = self._calculate_ma(daily_prices, 60)
+
+        return TechnicalIndicators(
+            stock_code=symbol,
+            stock_name=price_data.stock_name,
+            current_price=current,
+            high_52w=high_52w,
+            low_52w=low_52w,
+            high_52w_date=high_52w_date,
+            low_52w_date=low_52w_date,
+            from_high_52w=round(from_high, 2),
+            from_low_52w=round(from_low, 2),
+            rsi_14=rsi_14,
+            volatility_20=volatility_20,
+            ma_5=ma_5,
+            ma_20=ma_20,
+            ma_60=ma_60,
+        )
+
 
 # 전역 클라이언트 인스턴스 (싱글톤)
 _client: Optional[KISClient] = None

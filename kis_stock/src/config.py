@@ -82,8 +82,28 @@ class GitHubOAuthConfig:
         return bool(self.client_id and self.client_secret)
 
 
+@dataclass
+class NaverConfig:
+    """네이버 검색 API 설정"""
+    client_id: str
+    client_secret: str
+    base_url: str = "https://openapi.naver.com/v1/search"
+
+    @classmethod
+    def from_env(cls) -> "NaverConfig":
+        return cls(
+            client_id=os.getenv("NAVER_CLIENT_ID", ""),
+            client_secret=os.getenv("NAVER_CLIENT_SECRET", ""),
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.client_id and self.client_secret)
+
+
 # 전역 설정 인스턴스
 kis_config = KISConfig.from_env()
 server_config = ServerConfig.from_env()
 dart_config = DARTConfig.from_env()
 github_config = GitHubOAuthConfig.from_env()
+naver_config = NaverConfig.from_env()
