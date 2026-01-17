@@ -798,7 +798,7 @@
                     const changeClass = getChangeClass(stock.profit_rate);
 
                     html += `
-                        <div class="stock-item" onclick="quickSearchStock('${code}', ${isOverseas})">
+                        <div class="stock-item" onclick="quickSearchStock('${code}', ${isOverseas}, '${name}')">
                             <div class="stock-info">
                                 <h3>${name}</h3>
                                 <div class="code">${code}${isOverseas ? ' · ' + stock.exchange : ''}</div>
@@ -858,7 +858,7 @@
                 holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
-                        <div class="stock-item" onclick="quickSearchInvestor('${stock.stock_code}')">
+                        <div class="stock-item" onclick="quickSearchInvestor('${stock.stock_code}', '${stock.stock_name}')"
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.stock_code}</div>
@@ -916,7 +916,7 @@
         }
 
         // 빠른 시세 조회 (보유종목 클릭 시)
-        async function quickSearchStock(code, isOverseas) {
+        async function quickSearchStock(code, isOverseas, stockName = '') {
             document.getElementById('stock-code').value = code;
 
             const container = document.getElementById('price-search-result');
@@ -943,6 +943,11 @@
                 if (data.error) {
                     container.innerHTML = `<div class="error">${data.error}</div>`;
                     return;
+                }
+
+                // 종목명이 코드와 같거나 없으면 전달받은 이름 사용
+                if (stockName && (!data.stock_name || data.stock_name === data.stock_code || data.stock_name === 'None')) {
+                    data.stock_name = stockName;
                 }
 
                 renderPrice(data, isOverseas, container);
@@ -1029,7 +1034,7 @@
         }
 
         // 빠른 수급 조회 (보유종목 클릭 시)
-        async function quickSearchInvestor(code) {
+        async function quickSearchInvestor(code, stockName = '') {
             document.getElementById('investor-code').value = code;
 
             const container = document.getElementById('investor-search-result');
@@ -1053,6 +1058,11 @@
                 if (data.error) {
                     container.innerHTML = `<div class="error">${data.error}</div>`;
                     return;
+                }
+
+                // 종목명이 코드와 같거나 없으면 전달받은 이름 사용
+                if (stockName && (!data.stock_name || data.stock_name === data.stock_code || data.stock_name === 'None')) {
+                    data.stock_name = stockName;
                 }
 
                 renderInvestor(data, container);
@@ -1211,7 +1221,7 @@
                 holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
-                        <div class="stock-item" onclick="quickSearchTechnical('${stock.stock_code}')">
+                        <div class="stock-item" onclick="quickSearchTechnical('${stock.stock_code}', '${stock.stock_name}')"
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.stock_code}</div>
@@ -1263,10 +1273,43 @@
             }
         }
 
-        async function quickSearchTechnical(code) {
+        async function quickSearchTechnical(code, stockName = '') {
             document.getElementById('technical-code').value = code;
             window.scrollTo({ top: 0, behavior: 'smooth' });
-            await searchTechnical();
+            await searchTechnicalWithName(code, stockName);
+        }
+
+        async function searchTechnicalWithName(code, stockName) {
+            const container = document.getElementById('technical-search-result');
+            container.innerHTML = '<div class="loading">조회 중</div>';
+
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_technical_indicators',
+                        arguments: { stock_code: code }
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                // 종목명이 코드와 같거나 없으면 전달받은 이름 사용
+                if (stockName && (!data.stock_name || data.stock_name === data.stock_code || data.stock_name === 'None')) {
+                    data.stock_name = stockName;
+                }
+
+                renderTechnical(data, container);
+                updateTimestamp();
+            } catch (e) {
+                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+            }
         }
 
         function renderTechnical(data, container) {
