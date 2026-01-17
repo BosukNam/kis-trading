@@ -23,9 +23,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 import uvicorn
 
-from .config import server_config, kis_config, github_config, dart_config
+from .config import server_config, kis_config, github_config, dart_config, naver_config
 from .kis.client import get_kis_client
 from .kis.dart_client import get_dart_client
+from .kis.naver_client import get_naver_client
 
 # Static 파일 경로
 STATIC_DIR = Path(__file__).parent / "static"
@@ -533,6 +534,27 @@ async def call_tool(request: Request) -> JSONResponse:
                     # 매칭되지 않으면 부분 검색 (3개월 제한)
                     result = await dart_client.get_disclosures(corp_name=stock_name, page_count=count)
             return JSONResponse({"disclosures": [d.model_dump(mode="json") for d in result]})
+
+        elif tool_name == "get_stock_news":
+            stock_name = arguments.get("stock_name", "")
+            count = arguments.get("count", 10)
+
+            if not naver_config.enabled:
+                return JSONResponse({"error": "Naver API not configured", "news": []})
+
+            naver_client = get_naver_client()
+            result = await naver_client.search_stock_news(stock_name, count=count)
+            return JSONResponse({
+                "news": [
+                    {
+                        "title": item.title,
+                        "link": item.link,
+                        "description": item.description,
+                        "pub_date": item.pub_date_formatted,
+                    }
+                    for item in result
+                ]
+            })
 
         else:
             return JSONResponse({"error": f"Unknown tool: {tool_name}"}, status_code=400)

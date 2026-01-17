@@ -447,6 +447,7 @@
         <button class="tab" data-tab="investor">수급</button>
         <button class="tab" data-tab="technical">지표</button>
         <button class="tab" data-tab="financial">재무</button>
+        <button class="tab" data-tab="news">뉴스</button>
     </div>
 
     <div class="content">
@@ -523,6 +524,24 @@
                 <div class="loading">로딩 중</div>
             </div>
         </div>
+
+        <!-- 뉴스 탭 -->
+        <div id="news-tab" class="tab-content hidden">
+            <div class="search-box">
+                <input type="text" id="news-name" placeholder="종목명 (예: 삼성전자, AAPL)">
+                <button onclick="searchNews()">조회</button>
+            </div>
+            <div id="news-search-result"></div>
+
+            <div class="section-title">내 보유종목</div>
+            <div class="market-toggle" id="news-market-toggle">
+                <button class="active" data-market="domestic">국내</button>
+                <button data-market="overseas">해외</button>
+            </div>
+            <div id="news-holdings-content">
+                <div class="loading">로딩 중</div>
+            </div>
+        </div>
     </div>
 
     <!-- Action Sheet -->
@@ -535,6 +554,7 @@
             <button class="action-sheet-btn" onclick="goToPrice()">📈 시세 조회</button>
             <button class="action-sheet-btn" id="actionInvestorBtn" onclick="goToInvestor()">📊 수급 조회</button>
             <button class="action-sheet-btn" id="actionTechnicalBtn" onclick="goToTechnical()">📉 기술지표</button>
+            <button class="action-sheet-btn" id="actionNewsBtn" onclick="goToNews()">📰 뉴스</button>
             <button class="action-sheet-btn cancel" onclick="closeActionSheet()">취소</button>
         </div>
     </div>
@@ -1759,6 +1779,158 @@
             container.innerHTML = html;
         }
 
+        // 뉴스 탭 관련 변수
+        let currentNewsMarket = 'domestic';
+
+        // 뉴스 마켓 토글 이벤트
+        document.getElementById('news-market-toggle')?.addEventListener('click', (e) => {
+            if (e.target.tagName === 'BUTTON') {
+                document.querySelectorAll('#news-market-toggle button').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                currentNewsMarket = e.target.dataset.market;
+                loadNewsHoldings();
+            }
+        });
+
+        // 뉴스 탭 - 보유종목 로드
+        async function loadNewsHoldings() {
+            const container = document.getElementById('news-holdings-content');
+
+            const balance = currentNewsMarket === 'domestic' ? cachedDomesticBalance : cachedOverseasBalance;
+
+            if (balance) {
+                renderNewsHoldings(balance, container, currentNewsMarket);
+                return;
+            }
+
+            container.innerHTML = '<div class="loading">로딩 중</div>';
+
+            try {
+                const endpoint = currentNewsMarket === 'domestic' ? 'get_domestic_balance' : 'get_overseas_balance';
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: endpoint, arguments: {} })
+                });
+
+                const data = await res.json();
+
+                if (data.error) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                if (currentNewsMarket === 'domestic') {
+                    cachedDomesticBalance = data;
+                } else {
+                    cachedOverseasBalance = data;
+                }
+                renderNewsHoldings(data, container, currentNewsMarket);
+            } catch (e) {
+                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+            }
+        }
+
+        function renderNewsHoldings(data, container, market) {
+            if (!data.holdings || data.holdings.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목 없음</div>';
+                return;
+            }
+
+            let html = '<div class="stock-list">';
+            data.holdings.forEach(h => {
+                const stockName = h.stock_name;
+                html += `
+                    <div class="stock-item" onclick="quickSearchNews('${stockName}')">
+                        <div class="stock-info">
+                            <h3>${stockName}</h3>
+                            <div class="code">${h.stock_code}</div>
+                        </div>
+                        <div style="color: var(--text-secondary); font-size: 20px;">→</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        async function searchNews() {
+            const name = document.getElementById('news-name').value.trim();
+            if (!name) return;
+            await searchNewsWithName(name);
+        }
+
+        async function quickSearchNews(stockName) {
+            document.getElementById('news-name').value = stockName;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            await searchNewsWithName(stockName);
+        }
+
+        async function searchNewsWithName(stockName) {
+            const container = document.getElementById('news-search-result');
+            container.innerHTML = '<div class="loading">뉴스 검색 중</div>';
+
+            try {
+                const res = await fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_stock_news',
+                        arguments: { stock_name: stockName, count: 15 }
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.error && !data.news) {
+                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                renderNews(data.news || [], container, stockName);
+                updateTimestamp();
+            } catch (e) {
+                container.innerHTML = `<div class="error">뉴스 검색 실패: ${e.message}</div>`;
+            }
+        }
+
+        function renderNews(news, container, stockName = '') {
+            if (!news || news.length === 0) {
+                container.innerHTML = `<div style="text-align: center; padding: 20px; color: var(--text-secondary);">${stockName ? stockName + ' 관련 ' : ''}뉴스 없음 (네이버 API 키 설정 필요)</div>`;
+                return;
+            }
+
+            let html = '<div class="stock-list">';
+            news.forEach(n => {
+                html += `
+                    <div class="stock-item" onclick="window.open('${n.link}', '_blank')" style="min-height: auto;">
+                        <div class="stock-info" style="flex: 1;">
+                            <h3 style="font-size: 13px; line-height: 1.4; margin-bottom: 4px;">${n.title}</h3>
+                            <div class="code" style="font-size: 11px; color: var(--text-secondary);">${n.pub_date}</div>
+                        </div>
+                        <div style="color: var(--text-secondary); font-size: 20px;">→</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function goToNews() {
+            closeActionSheet();
+
+            // 탭 전환
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelector('.tab[data-tab="news"]').classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+            document.getElementById('news-tab').classList.remove('hidden');
+            currentTab = 'news';
+            loadNewsHoldings();
+
+            // 검색 실행
+            quickSearchNews(selectedStock.name);
+        }
+
         function updateTimestamp() {
             const now = new Date();
             document.getElementById('lastUpdate').textContent =
@@ -1787,6 +1959,10 @@
                 loadFinancialHoldings();
                 if (document.getElementById('financial-name').value) searchFinancial();
             }
+            else if (currentTab === 'news') {
+                loadNewsHoldings();
+                if (document.getElementById('news-name').value) searchNews();
+            }
         }
 
         // Enter 키 지원
@@ -1801,6 +1977,9 @@
         });
         document.getElementById('financial-name').addEventListener('keypress', e => {
             if (e.key === 'Enter') searchFinancial();
+        });
+        document.getElementById('news-name').addEventListener('keypress', e => {
+            if (e.key === 'Enter') searchNews();
         });
 
         // 초기 로드
