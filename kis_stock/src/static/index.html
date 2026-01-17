@@ -533,8 +533,8 @@
                 <div class="code" id="actionStockCode">종목코드</div>
             </div>
             <button class="action-sheet-btn" onclick="goToPrice()">📈 시세 조회</button>
-            <button class="action-sheet-btn" onclick="goToInvestor()">📊 수급 조회</button>
-            <button class="action-sheet-btn" onclick="goToTechnical()">📉 기술지표</button>
+            <button class="action-sheet-btn" id="actionInvestorBtn" onclick="goToInvestor()">📊 수급 조회</button>
+            <button class="action-sheet-btn" id="actionTechnicalBtn" onclick="goToTechnical()">📉 기술지표</button>
             <button class="action-sheet-btn cancel" onclick="closeActionSheet()">취소</button>
         </div>
     </div>
@@ -1107,6 +1107,12 @@
             selectedStock = { name, code, market };
             document.getElementById('actionStockName').textContent = name;
             document.getElementById('actionStockCode').textContent = code;
+
+            // 해외 종목은 수급/기술지표 버튼 숨기기
+            const isOverseas = market === 'overseas';
+            document.getElementById('actionInvestorBtn').style.display = isOverseas ? 'none' : 'block';
+            document.getElementById('actionTechnicalBtn').style.display = isOverseas ? 'none' : 'block';
+
             document.getElementById('actionSheet').classList.add('show');
         }
 
@@ -1132,17 +1138,16 @@
             currentPriceMarket = market;
             loadPriceHoldings();
 
-            // 검색 실행
-            document.getElementById('stock-code').value = selectedStock.code;
-            searchStock();
+            // 검색 실행 (종목명 전달)
+            const isOverseas = market === 'overseas';
+            quickSearchStock(selectedStock.code, isOverseas, selectedStock.name);
         }
 
         function goToInvestor() {
             closeActionSheet();
 
-            // 해외 종목은 수급 조회 불가
+            // 해외 종목은 수급 조회 불가 (버튼이 숨겨져 있지만 방어 코드)
             if (selectedStock.market === 'overseas') {
-                alert('해외 종목은 수급 조회가 지원되지 않습니다.');
                 return;
             }
 
@@ -1154,17 +1159,15 @@
             currentTab = 'investor';
             loadInvestorHoldings();
 
-            // 검색 실행
-            document.getElementById('investor-code').value = selectedStock.code;
-            searchInvestor();
+            // 검색 실행 (종목명 전달)
+            quickSearchInvestor(selectedStock.code, selectedStock.name);
         }
 
         function goToTechnical() {
             closeActionSheet();
 
-            // 해외 종목은 기술지표 조회 불가
+            // 해외 종목은 기술지표 조회 불가 (버튼이 숨겨져 있지만 방어 코드)
             if (selectedStock.market === 'overseas') {
-                alert('해외 종목은 기술지표 조회가 지원되지 않습니다.');
                 return;
             }
 
@@ -1176,9 +1179,8 @@
             currentTab = 'technical';
             loadTechnicalHoldings();
 
-            // 검색 실행
-            document.getElementById('technical-code').value = selectedStock.code;
-            searchTechnical();
+            // 검색 실행 (종목명 전달)
+            quickSearchTechnical(selectedStock.code, selectedStock.name);
         }
 
         // 기술지표 탭 - 보유종목 로드
