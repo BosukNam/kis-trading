@@ -617,6 +617,8 @@
                     loadTechnicalHoldings();
                 } else if (currentTab === 'financial') {
                     loadFinancialHoldings();
+                } else if (currentTab === 'news') {
+                    loadNewsTabWithAutoNews();
                 }
             });
         });
@@ -1816,9 +1818,122 @@
                 document.querySelectorAll('#news-market-toggle button').forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
                 currentNewsMarket = e.target.dataset.market;
-                loadNewsHoldings();
+                loadNewsTabWithAutoNews();
             }
         });
+
+        // 뉴스 탭 자동 로드 (보유종목 뉴스 자동 표시)
+        async function loadNewsTabWithAutoNews() {
+            const holdingsContainer = document.getElementById('news-holdings-content');
+            const newsContainer = document.getElementById('news-search-result');
+
+            // 보유종목 로드
+            let balance = currentNewsMarket === 'domestic' ? cachedDomesticBalance : cachedOverseasBalance;
+
+            if (!balance) {
+                holdingsContainer.innerHTML = '<div class="loading">로딩 중</div>';
+                newsContainer.innerHTML = '<div class="loading">뉴스 로딩 중</div>';
+
+                try {
+                    const endpoint = currentNewsMarket === 'domestic' ? 'get_domestic_balance' : 'get_overseas_balance';
+                    const res = await fetch('/call', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: endpoint, arguments: {} })
+                    });
+
+                    const data = await res.json();
+
+                    if (data.error) {
+                        holdingsContainer.innerHTML = `<div class="error">${data.error}</div>`;
+                        newsContainer.innerHTML = '';
+                        return;
+                    }
+
+                    if (currentNewsMarket === 'domestic') {
+                        cachedDomesticBalance = data;
+                    } else {
+                        cachedOverseasBalance = data;
+                    }
+                    balance = data;
+                } catch (e) {
+                    holdingsContainer.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+                    newsContainer.innerHTML = '';
+                    return;
+                }
+            }
+
+            renderNewsHoldings(balance, holdingsContainer, currentNewsMarket);
+
+            // 보유종목이 있으면 자동으로 뉴스 로드
+            if (balance.holdings && balance.holdings.length > 0) {
+                newsContainer.innerHTML = '<div class="loading">보유종목 뉴스 검색 중</div>';
+
+                // 최대 3개 종목의 뉴스를 병렬로 가져옴
+                const stocksToFetch = balance.holdings.slice(0, 3);
+                const newsPromises = stocksToFetch.map(h =>
+                    fetch('/call', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: 'get_stock_news',
+                            arguments: { stock_name: h.stock_name, count: 5 }
+                        })
+                    }).then(res => res.json()).then(data => ({
+                        stockName: h.stock_name,
+                        news: data.news || []
+                    })).catch(() => ({ stockName: h.stock_name, news: [] }))
+                );
+
+                const results = await Promise.all(newsPromises);
+
+                // 모든 뉴스를 합쳐서 날짜순 정렬
+                let allNews = [];
+                results.forEach(r => {
+                    r.news.forEach(n => {
+                        allNews.push({ ...n, stockName: r.stockName });
+                    });
+                });
+
+                // 날짜순 정렬 (최신순)
+                allNews.sort((a, b) => {
+                    const dateA = new Date(a.pub_date);
+                    const dateB = new Date(b.pub_date);
+                    return dateB - dateA;
+                });
+
+                // 최대 8개만 표시
+                allNews = allNews.slice(0, 8);
+
+                renderCombinedNews(allNews, newsContainer);
+                updateTimestamp();
+            } else {
+                newsContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목이 없습니다</div>';
+            }
+        }
+
+        // 여러 종목 뉴스 통합 렌더링
+        function renderCombinedNews(news, container) {
+            if (!news || news.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">뉴스 없음 (네이버 API 키 설정 필요)</div>';
+                return;
+            }
+
+            let html = '<div class="stock-list">';
+            news.forEach(n => {
+                html += `
+                    <div class="stock-item" onclick="window.open('${n.link}', '_blank')" style="min-height: auto;">
+                        <div class="stock-info" style="flex: 1;">
+                            <h3 style="font-size: 13px; line-height: 1.4; margin-bottom: 4px;">${n.title}</h3>
+                            <div class="code" style="font-size: 11px; color: var(--text-secondary);">${n.stockName} · ${n.pub_date}</div>
+                        </div>
+                        <div style="color: var(--text-secondary); font-size: 20px;">→</div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
 
         // 뉴스 탭 - 보유종목 로드
         async function loadNewsHoldings() {
@@ -1988,8 +2103,7 @@
                 if (document.getElementById('financial-name').value) searchFinancial();
             }
             else if (currentTab === 'news') {
-                loadNewsHoldings();
-                if (document.getElementById('news-name').value) searchNews();
+                loadNewsTabWithAutoNews();
             }
         }
 
