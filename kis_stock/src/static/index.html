@@ -1980,14 +1980,16 @@
                 return;
             }
 
+            const isOverseas = market === 'overseas';
             let html = '<div class="stock-list">';
             data.holdings.forEach(h => {
                 const stockName = h.stock_name;
+                const stockCode = isOverseas ? h.symbol : h.stock_code;
                 html += `
                     <div class="stock-item" onclick="quickSearchNews('${stockName}')">
                         <div class="stock-info">
                             <h3>${stockName}</h3>
-                            <div class="code">${h.stock_code}</div>
+                            <div class="code">${stockCode}${isOverseas ? ' · ' + (h.exchange || '') : ''}</div>
                         </div>
                         <div style="color: var(--text-secondary); font-size: 20px;">→</div>
                     </div>
