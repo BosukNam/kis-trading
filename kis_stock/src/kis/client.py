@@ -259,12 +259,20 @@ class KISClient:
 
         # 총계 정보
         output2 = data.get("output2", [{}])[0] if data.get("output2") else {}
+        total_asset = self._safe_int(output2.get("tot_evlu_amt"))
+        profit_loss = self._safe_int(output2.get("evlu_pfls_smtl_amt"))
+
+        # 수익률 계산: API에서 제공하지 않으므로 직접 계산
+        # 수익률 = 손익금액 / (총자산 - 손익금액) * 100 = 손익금액 / 매입금액 * 100
+        purchase_amount = total_asset - profit_loss
+        profit_rate = (profit_loss / purchase_amount * 100) if purchase_amount > 0 else 0.0
+
         return BalanceInfo(
-            total_asset=self._safe_int(output2.get("tot_evlu_amt")),
+            total_asset=total_asset,
             cash=self._safe_int(output2.get("nxdy_excc_amt")),
             stock_value=self._safe_int(output2.get("scts_evlu_amt")),
-            profit_loss=self._safe_int(output2.get("evlu_pfls_smtl_amt")),
-            profit_rate=self._safe_float(output2.get("evlu_pfls_rt")),
+            profit_loss=profit_loss,
+            profit_rate=round(profit_rate, 2),
             holdings=holdings,
         )
 
@@ -309,13 +317,25 @@ class KISClient:
                 )
 
         output2 = data.get("output2", {}) or {}
+
+        # 보유종목에서 총자산과 손익 계산 (API output2 필드가 부정확하므로)
+        total_asset_usd = sum(h.eval_amount for h in holdings)
+        profit_loss_usd = sum(h.profit_loss for h in holdings)
+
+        # 수익률 계산: 손익금액 / 매입금액 * 100
+        purchase_amount = total_asset_usd - profit_loss_usd
+        profit_rate = (profit_loss_usd / purchase_amount * 100) if purchase_amount > 0 else 0.0
+
+        # 환율
+        exchange_rate = self._safe_float(output2.get("exrt", 1300))
+
         return OverseasBalanceInfo(
-            total_asset_usd=self._safe_float(output2.get("tot_evlu_pfls_amt")),
-            total_asset_krw=self._safe_int(output2.get("tot_evlu_pfls_amt_krw")),
-            profit_loss_usd=self._safe_float(output2.get("ovrs_rlzt_pfls_amt")),
-            profit_rate=self._safe_float(output2.get("tot_evlu_pfls_rt")),
+            total_asset_usd=round(total_asset_usd, 2),
+            total_asset_krw=int(total_asset_usd * exchange_rate),
+            profit_loss_usd=round(profit_loss_usd, 2),
+            profit_rate=round(profit_rate, 2),
             holdings=holdings,
-            exchange_rate=self._safe_float(output2.get("exrt", 1300)),
+            exchange_rate=exchange_rate,
         )
 
     async def get_investor_trend(self, stock_code: str) -> Optional[InvestorTrend]:
