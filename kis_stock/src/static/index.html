@@ -183,6 +183,24 @@
             white-space: nowrap;
         }
 
+        .investor-summary {
+            text-align: right;
+        }
+
+        .investor-summary .total {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .investor-summary .detail {
+            font-size: 11px;
+            margin-top: 4px;
+            display: flex;
+            gap: 6px;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+        }
+
         .search-box {
             background: var(--bg-card);
             border-radius: 12px;
@@ -1196,19 +1214,21 @@
                         return sign + formatNumber(val);
                     };
 
-                    const prevLabel = isPrev ? '<span style="color: var(--text-secondary); font-size: 10px;">(전일)</span>' : '';
+                    const prevPrefix = isPrev ? '<span style="color: var(--text-secondary);">(전일)</span> ' : '';
 
                     html += `
                         <div class="stock-item" onclick="quickSearchInvestor('${stock.stock_code}', '${stock.stock_name}')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
-                                <div class="code">${stock.stock_code} ${prevLabel}</div>
+                                <div class="code">${stock.stock_code}</div>
                             </div>
-                            <div class="investor-data">
-                                <span class="${getChangeClass(individual)}">개인 ${formatQty(individual)}</span>
-                                <span class="${getChangeClass(foreign)}">외인 ${formatQty(foreign)}</span>
-                                <span class="${getChangeClass(institution)}">기관 ${formatQty(institution)}</span>
-                                <span class="${getChangeClass(total)}" style="margin-top: 2px; padding-top: 2px; border-top: 1px solid var(--border-color);">전체 ${formatQty(total)}</span>
+                            <div class="investor-summary">
+                                <div class="total ${getChangeClass(total)}">${formatQty(total)}</div>
+                                <div class="detail">
+                                    ${prevPrefix}<span class="${getChangeClass(individual)}">개인 ${formatQty(individual)}</span>
+                                    <span class="${getChangeClass(foreign)}">외인 ${formatQty(foreign)}</span>
+                                    <span class="${getChangeClass(institution)}">기관 ${formatQty(institution)}</span>
+                                </div>
                             </div>
                         </div>
                     `;
@@ -1508,62 +1528,43 @@
             const todayAllZero = data.individual === 0 && data.foreign === 0 && data.institution === 0;
             const hasPrevData = data.prev_individual != null || data.prev_foreign != null || data.prev_institution != null;
 
-            // 전체 합산
-            const total = data.individual + data.foreign + data.institution;
-            const prevTotal = hasPrevData ? (data.prev_individual || 0) + (data.prev_foreign || 0) + (data.prev_institution || 0) : null;
+            // 사용할 데이터 결정
+            const usePrev = todayAllZero && hasPrevData;
+            const individual = usePrev ? data.prev_individual : data.individual;
+            const foreign = usePrev ? data.prev_foreign : data.foreign;
+            const institution = usePrev ? data.prev_institution : data.institution;
+            const total = individual + foreign + institution;
+            const dateStr = usePrev ? data.prev_date : data.date;
 
-            let html = `
+            // (전일) prefix
+            const prevPrefix = usePrev ? '<span style="color: var(--text-secondary);">(전일)</span> ' : '';
+
+            container.innerHTML = `
                 <div class="investor-card">
-                    <div style="margin-bottom: 16px;">
-                        <div style="font-size: 18px; font-weight: 600;">${data.stock_name}</div>
-                        <div style="font-size: 13px; color: var(--text-secondary);">${data.stock_code}</div>
-                    </div>
-                    <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-secondary);">
-                        ${todayAllZero && hasPrevData ? '전일' : '당일'} (${todayAllZero && hasPrevData ? data.prev_date : data.date})
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px;">
+                        <div>
+                            <div style="font-size: 18px; font-weight: 600;">${data.stock_name}</div>
+                            <div style="font-size: 13px; color: var(--text-secondary);">${data.stock_code} · ${dateStr}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-size: 20px; font-weight: 700;" class="${getClass(total)}">${formatAmount(total)}</div>
+                            <div style="font-size: 11px; color: var(--text-secondary);">전체</div>
+                        </div>
                     </div>
                     <div class="investor-row">
                         <span class="name">개인</span>
-                        <span class="amount ${getClass(todayAllZero && hasPrevData ? data.prev_individual : data.individual)}">${formatAmount(todayAllZero && hasPrevData ? data.prev_individual : data.individual)}</span>
+                        <span class="amount ${getClass(individual)}">${prevPrefix}${formatAmount(individual)}</span>
                     </div>
                     <div class="investor-row">
                         <span class="name">외국인</span>
-                        <span class="amount ${getClass(todayAllZero && hasPrevData ? data.prev_foreign : data.foreign)}">${formatAmount(todayAllZero && hasPrevData ? data.prev_foreign : data.foreign)}</span>
+                        <span class="amount ${getClass(foreign)}">${prevPrefix}${formatAmount(foreign)}</span>
                     </div>
                     <div class="investor-row">
                         <span class="name">기관</span>
-                        <span class="amount ${getClass(todayAllZero && hasPrevData ? data.prev_institution : data.institution)}">${formatAmount(todayAllZero && hasPrevData ? data.prev_institution : data.institution)}</span>
+                        <span class="amount ${getClass(institution)}">${prevPrefix}${formatAmount(institution)}</span>
                     </div>
-                    <div class="investor-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);">
-                        <span class="name">전체</span>
-                        <span class="amount ${getClass(todayAllZero && hasPrevData ? prevTotal : total)}">${formatAmount(todayAllZero && hasPrevData ? prevTotal : total)}</span>
-                    </div>
+                </div>
             `;
-
-            // 전일 데이터가 있고 당일 데이터도 있으면 전일도 표시
-            if (hasPrevData && !todayAllZero) {
-                html += `
-                    <div style="font-size: 13px; font-weight: 600; margin: 16px 0 8px 0; color: var(--text-secondary);">전일 (${data.prev_date})</div>
-                    <div class="investor-row">
-                        <span class="name">개인</span>
-                        <span class="amount ${getClass(data.prev_individual)}">${formatAmount(data.prev_individual)}</span>
-                    </div>
-                    <div class="investor-row">
-                        <span class="name">외국인</span>
-                        <span class="amount ${getClass(data.prev_foreign)}">${formatAmount(data.prev_foreign)}</span>
-                    </div>
-                    <div class="investor-row">
-                        <span class="name">기관</span>
-                        <span class="amount ${getClass(data.prev_institution)}">${formatAmount(data.prev_institution)}</span>
-                    </div>
-                    <div class="investor-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);">
-                        <span class="name">전체</span>
-                        <span class="amount ${getClass(prevTotal)}">${formatAmount(prevTotal)}</span>
-                    </div>
-                `;
-            }
-
-            html += '</div>';
-            container.innerHTML = html;
         }
 
         // Action Sheet
