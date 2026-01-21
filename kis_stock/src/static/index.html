@@ -1659,13 +1659,20 @@
             }
         });
 
+        // 기술지표 RSI 캐시
+        let cachedTechnicalRsi = { domestic: {}, overseas: {} };
+
         // 기술지표 탭 - 보유종목 로드
         async function loadTechnicalHoldings() {
             const container = document.getElementById('technical-holdings-content');
+            const isOverseas = currentTechnicalMarket === 'overseas';
 
-            const balance = currentTechnicalMarket === 'domestic' ? cachedDomesticBalance : cachedOverseasBalance;
+            const balance = isOverseas ? cachedOverseasBalance : cachedDomesticBalance;
 
             if (balance) {
+                // 잔고 데이터가 있으면 먼저 렌더링 후 RSI 조회
+                renderTechnicalHoldings(balance, container, currentTechnicalMarket);
+                await fetchTechnicalRsiForHoldings(balance, isOverseas);
                 renderTechnicalHoldings(balance, container, currentTechnicalMarket);
                 return;
             }
@@ -1673,7 +1680,7 @@
             container.innerHTML = '<div class="loading">로딩 중</div>';
 
             try {
-                const endpoint = currentTechnicalMarket === 'domestic' ? 'get_domestic_balance' : 'get_overseas_balance';
+                const endpoint = isOverseas ? 'get_overseas_balance' : 'get_domestic_balance';
                 const res = await fetch('/call', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1687,19 +1694,90 @@
                     return;
                 }
 
-                if (currentTechnicalMarket === 'domestic') {
-                    cachedDomesticBalance = data;
-                } else {
+                if (isOverseas) {
                     cachedOverseasBalance = data;
+                } else {
+                    cachedDomesticBalance = data;
                 }
+
+                // 먼저 잔고 데이터로 렌더링
+                renderTechnicalHoldings(data, container, currentTechnicalMarket);
+
+                // RSI 데이터 병렬 조회 후 다시 렌더링
+                await fetchTechnicalRsiForHoldings(data, isOverseas);
                 renderTechnicalHoldings(data, container, currentTechnicalMarket);
             } catch (e) {
                 container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
             }
         }
 
+        // 보유종목 RSI 병렬 조회
+        async function fetchTechnicalRsiForHoldings(balanceData, isOverseas) {
+            const holdings = balanceData.holdings || [];
+            if (holdings.length === 0) return;
+
+            const cacheKey = isOverseas ? 'overseas' : 'domestic';
+
+            // 이미 캐시에 있는 종목은 제외
+            const toFetch = holdings.filter(h => {
+                const code = isOverseas ? h.symbol : h.stock_code;
+                return !cachedTechnicalRsi[cacheKey][code];
+            });
+
+            if (toFetch.length === 0) return;
+
+            // 병렬로 RSI 조회
+            const promises = toFetch.map(async stock => {
+                const code = isOverseas ? stock.symbol : stock.stock_code;
+                const exchange = isOverseas ? (stock.exchange || 'NAS') : '';
+
+                try {
+                    const args = { stock_code: code };
+                    if (isOverseas) {
+                        args.market = 'overseas';
+                        args.exchange = exchange;
+                    }
+
+                    const res = await fetch('/call', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: 'get_technical_indicators',
+                            arguments: args
+                        })
+                    });
+
+                    const data = await res.json();
+                    if (!data.error && data.rsi_14 !== null && data.rsi_14 !== undefined) {
+                        cachedTechnicalRsi[cacheKey][code] = data.rsi_14;
+                    }
+                } catch (e) {
+                    console.error(`RSI fetch failed for ${code}:`, e);
+                }
+            });
+
+            await Promise.all(promises);
+        }
+
         function renderTechnicalHoldings(data, container, market = 'domestic') {
             const isOverseas = market === 'overseas';
+            const cacheKey = isOverseas ? 'overseas' : 'domestic';
+
+            // RSI 클래스 결정 (과매수: red, 과매도: green, 중립: 기본)
+            const getRsiClass = (rsi) => {
+                if (rsi === null || rsi === undefined) return '';
+                if (rsi >= 70) return 'negative';  // 과매수
+                if (rsi <= 30) return 'positive';  // 과매도
+                return '';
+            };
+
+            // RSI 상태 텍스트
+            const getRsiStatus = (rsi) => {
+                if (rsi === null || rsi === undefined) return '-';
+                if (rsi >= 70) return `${rsi.toFixed(0)} (과매수)`;
+                if (rsi <= 30) return `${rsi.toFixed(0)} (과매도)`;
+                return `${rsi.toFixed(0)}`;
+            };
 
             // 정렬 토글 추가
             let html = createSortToggle('technical');
@@ -1707,13 +1785,20 @@
 
             const holdings = data.holdings || [];
             if (holdings.length > 0) {
-                // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
-                let sorted = [...holdings].sort((a, b) => b.eval_amount - a.eval_amount);
-                sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+                // 각 종목에 RSI 값 추가
+                const holdingsWithRsi = holdings.map(stock => {
+                    const code = isOverseas ? stock.symbol : stock.stock_code;
+                    const rsi = cachedTechnicalRsi[cacheKey][code] ?? null;
+                    return { ...stock, rsi };
+                });
+
+                // 기본 정렬: 평가금액 높은 순, 그 외: RSI 기준
+                let sorted = [...holdingsWithRsi].sort((a, b) => b.eval_amount - a.eval_amount);
+                sorted = sortHoldings(sorted, currentSortOrder, h => h.rsi ?? 50);  // RSI 없으면 50으로 간주
 
                 sorted.forEach(stock => {
-                    const changeClass = getChangeClass(stock.profit_rate);
-                    const evalAmount = isOverseas ? formatCurrency(stock.eval_amount / 100, 'USD') : formatCurrency(stock.eval_amount);
+                    const rsiClass = getRsiClass(stock.rsi);
+                    const rsiDisplay = getRsiStatus(stock.rsi);
                     const stockCode = isOverseas ? stock.symbol : stock.stock_code;
                     const exchange = isOverseas ? (stock.exchange || 'NAS') : '';
                     html += `
@@ -1723,8 +1808,7 @@
                                 <div class="code">${stockCode}${isOverseas ? ' · ' + exchange : ''}</div>
                             </div>
                             <div class="stock-price">
-                                <div class="current">${evalAmount}</div>
-                                <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
+                                <div class="current ${rsiClass}" style="font-size: 18px;">RSI ${rsiDisplay}</div>
                             </div>
                         </div>
                     `;

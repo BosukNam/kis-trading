@@ -26,6 +26,16 @@ logger = logging.getLogger(__name__)
 class KISClient:
     """한국투자증권 API 비동기 클라이언트"""
 
+    # 잔고 API 거래소 코드 -> 시세 API 거래소 코드 매핑
+    EXCHANGE_MAP = {
+        "NASD": "NAS",   # 나스닥
+        "NYSE": "NYS",   # 뉴욕
+        "AMEX": "AMS",   # 아멕스
+        "NAS": "NAS",
+        "NYS": "NYS",
+        "AMS": "AMS",
+    }
+
     def __init__(self):
         self.app_key = kis_config.app_key
         self.app_secret = kis_config.app_secret
@@ -660,6 +670,9 @@ class KISClient:
         self, symbol: str, exchange: str = "NAS"
     ) -> Optional[TechnicalIndicators]:
         """해외주식 기술적 지표 조회 (52주 고저, RSI, 변동성, 이동평균)"""
+        # 거래소 코드 정규화
+        exchange = self.EXCHANGE_MAP.get(exchange, exchange)
+
         # 현재가 조회
         price_data = await self.get_overseas_stock_price(symbol, exchange)
         if not price_data:
