@@ -383,6 +383,38 @@
             background: var(--bg-secondary);
         }
 
+        .investor-sort-chips {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .sort-chip {
+            padding: 6px 12px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            border-radius: 16px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .sort-chip.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        .sort-chip:active {
+            background: var(--bg-secondary);
+        }
+
+        .sort-chip.active:active {
+            background: var(--accent-blue);
+            opacity: 0.8;
+        }
+
         /* Action Sheet 스타일 */
         .action-sheet-overlay {
             position: fixed;
@@ -606,6 +638,10 @@
         // 정렬 상태 (default, high, low)
         let currentSortOrder = 'default';
 
+        // 수급탭 정렬 상태 (type: individual, foreign, institution, total / order: default, high, low)
+        let investorSortType = 'total';
+        let investorSortOrder = 'default';
+
         // 정렬 함수
         function sortHoldings(holdings, sortOrder, getRateFunc) {
             if (sortOrder === 'default') {
@@ -632,9 +668,31 @@
             return 'default';
         }
 
+        // 수급탭 정렬 칩 라벨
+        function getInvestorSortLabel(type) {
+            const labels = { individual: '개인', foreign: '외인', institution: '기관', total: '전체' };
+            const label = labels[type] || '전체';
+            if (investorSortType !== type) return label;
+            if (investorSortOrder === 'high') return '▲ ' + label;
+            if (investorSortOrder === 'low') return '▼ ' + label;
+            return label;
+        }
+
         // 정렬 버튼 HTML 생성
         function createSortToggle(tabName) {
             return `<button class="sort-btn" id="${tabName}-sort-btn">${getSortLabel()}</button>`;
+        }
+
+        // 수급탭 정렬 칩 HTML 생성
+        function createInvestorSortToggle() {
+            const types = ['individual', 'foreign', 'institution', 'total'];
+            let html = '<div class="investor-sort-chips">';
+            types.forEach(type => {
+                const isActive = investorSortType === type && investorSortOrder !== 'default';
+                html += `<button class="sort-chip ${isActive ? 'active' : ''}" data-type="${type}">${getInvestorSortLabel(type)}</button>`;
+            });
+            html += '</div>';
+            return html;
         }
 
         // 정렬 버튼 이벤트 바인딩
@@ -1086,45 +1144,48 @@
         }
 
         function renderInvestorHoldings(holdings, container) {
-            // 정렬 토글 추가
-            let html = createSortToggle('investor');
+            // 투자자 데이터 추출 (당일 0이면 전일 사용)
+            const getInvestorData = (inv) => {
+                if (!inv || inv.error) return { individual: 0, foreign: 0, institution: 0, total: 0, isPrev: false };
+
+                const today = {
+                    individual: inv.individual || 0,
+                    foreign: inv.foreign || 0,
+                    institution: inv.institution || 0
+                };
+                today.total = today.individual + today.foreign + today.institution;
+
+                // 당일 데이터가 모두 0이면 전일 데이터 사용
+                if (today.individual === 0 && today.foreign === 0 && today.institution === 0) {
+                    if (inv.prev_individual != null || inv.prev_foreign != null || inv.prev_institution != null) {
+                        const prev = {
+                            individual: inv.prev_individual || 0,
+                            foreign: inv.prev_foreign || 0,
+                            institution: inv.prev_institution || 0,
+                            isPrev: true
+                        };
+                        prev.total = prev.individual + prev.foreign + prev.institution;
+                        return prev;
+                    }
+                }
+                return { ...today, isPrev: false };
+            };
+
+            // 정렬 칩 추가
+            let html = createInvestorSortToggle();
             html += '<div class="stock-list">';
 
             if (holdings.length > 0) {
-                // 투자자 데이터 추출 (당일 0이면 전일 사용)
-                const getInvestorData = (inv) => {
-                    if (!inv || inv.error) return { individual: 0, foreign: 0, institution: 0, isPrev: false };
-
-                    const today = {
-                        individual: inv.individual || 0,
-                        foreign: inv.foreign || 0,
-                        institution: inv.institution || 0
-                    };
-
-                    // 당일 데이터가 모두 0이면 전일 데이터 사용
-                    if (today.individual === 0 && today.foreign === 0 && today.institution === 0) {
-                        if (inv.prev_individual != null || inv.prev_foreign != null || inv.prev_institution != null) {
-                            return {
-                                individual: inv.prev_individual || 0,
-                                foreign: inv.prev_foreign || 0,
-                                institution: inv.prev_institution || 0,
-                                isPrev: true
-                            };
-                        }
-                    }
-                    return { ...today, isPrev: false };
-                };
-
-                // 외국인+기관 순매수 합산 기준 정렬
-                const getNetBuy = (h) => {
+                // 선택된 타입에 따른 정렬
+                const getSortValue = (h) => {
                     const data = getInvestorData(h.investorData);
-                    return data.foreign + data.institution;
+                    return data[investorSortType] || 0;
                 };
-                const sorted = sortHoldings(holdings, currentSortOrder, getNetBuy);
+                const sorted = sortHoldings(holdings, investorSortOrder, getSortValue);
 
                 sorted.forEach(stock => {
                     const data = getInvestorData(stock.investorData);
-                    const { individual, foreign, institution, isPrev } = data;
+                    const { individual, foreign, institution, total, isPrev } = data;
 
                     const formatQty = (val) => {
                         if (val === 0) return '0';
@@ -1147,6 +1208,7 @@
                                 <span class="${getChangeClass(individual)}">개인 ${formatQty(individual)}</span>
                                 <span class="${getChangeClass(foreign)}">외인 ${formatQty(foreign)}</span>
                                 <span class="${getChangeClass(institution)}">기관 ${formatQty(institution)}</span>
+                                <span class="${getChangeClass(total)}" style="margin-top: 2px; padding-top: 2px; border-top: 1px solid var(--border-color);">전체 ${formatQty(total)}</span>
                             </div>
                         </div>
                     `;
@@ -1158,11 +1220,24 @@
             html += '</div>';
             container.innerHTML = html;
 
-            // 정렬 이벤트 바인딩
-            bindSortToggle('investor', () => {
-                if (cachedInvestorHoldings) {
-                    renderInvestorHoldings(cachedInvestorHoldings, container);
-                }
+            // 정렬 칩 이벤트 바인딩
+            document.querySelectorAll('.investor-sort-chips .sort-chip').forEach(chip => {
+                chip.addEventListener('click', () => {
+                    const type = chip.dataset.type;
+                    if (investorSortType === type) {
+                        // 같은 타입 클릭: 순환 (default -> high -> low -> default)
+                        if (investorSortOrder === 'default') investorSortOrder = 'high';
+                        else if (investorSortOrder === 'high') investorSortOrder = 'low';
+                        else investorSortOrder = 'default';
+                    } else {
+                        // 다른 타입 클릭: 해당 타입으로 변경, 높은순 시작
+                        investorSortType = type;
+                        investorSortOrder = 'high';
+                    }
+                    if (cachedInvestorHoldings) {
+                        renderInvestorHoldings(cachedInvestorHoldings, container);
+                    }
+                });
             });
         }
 
@@ -1422,32 +1497,73 @@
 
         function renderInvestor(data, container) {
             const formatAmount = (val) => {
+                if (val == null) return '-';
                 const sign = val >= 0 ? '+' : '';
                 return sign + formatNumber(val) + '주';
             };
 
             const getClass = (val) => val >= 0 ? 'positive' : 'negative';
 
-            container.innerHTML = `
+            // 당일 데이터가 모두 0인지 확인
+            const todayAllZero = data.individual === 0 && data.foreign === 0 && data.institution === 0;
+            const hasPrevData = data.prev_individual != null || data.prev_foreign != null || data.prev_institution != null;
+
+            // 전체 합산
+            const total = data.individual + data.foreign + data.institution;
+            const prevTotal = hasPrevData ? (data.prev_individual || 0) + (data.prev_foreign || 0) + (data.prev_institution || 0) : null;
+
+            let html = `
                 <div class="investor-card">
                     <div style="margin-bottom: 16px;">
                         <div style="font-size: 18px; font-weight: 600;">${data.stock_name}</div>
-                        <div style="font-size: 13px; color: var(--text-secondary);">${data.stock_code} · ${data.date}</div>
+                        <div style="font-size: 13px; color: var(--text-secondary);">${data.stock_code}</div>
+                    </div>
+                    <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-secondary);">
+                        ${todayAllZero && hasPrevData ? '전일' : '당일'} (${todayAllZero && hasPrevData ? data.prev_date : data.date})
                     </div>
                     <div class="investor-row">
                         <span class="name">개인</span>
-                        <span class="amount ${getClass(data.individual)}">${formatAmount(data.individual)}</span>
+                        <span class="amount ${getClass(todayAllZero && hasPrevData ? data.prev_individual : data.individual)}">${formatAmount(todayAllZero && hasPrevData ? data.prev_individual : data.individual)}</span>
                     </div>
                     <div class="investor-row">
                         <span class="name">외국인</span>
-                        <span class="amount ${getClass(data.foreign)}">${formatAmount(data.foreign)}</span>
+                        <span class="amount ${getClass(todayAllZero && hasPrevData ? data.prev_foreign : data.foreign)}">${formatAmount(todayAllZero && hasPrevData ? data.prev_foreign : data.foreign)}</span>
                     </div>
                     <div class="investor-row">
                         <span class="name">기관</span>
-                        <span class="amount ${getClass(data.institution)}">${formatAmount(data.institution)}</span>
+                        <span class="amount ${getClass(todayAllZero && hasPrevData ? data.prev_institution : data.institution)}">${formatAmount(todayAllZero && hasPrevData ? data.prev_institution : data.institution)}</span>
                     </div>
-                </div>
+                    <div class="investor-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+                        <span class="name">전체</span>
+                        <span class="amount ${getClass(todayAllZero && hasPrevData ? prevTotal : total)}">${formatAmount(todayAllZero && hasPrevData ? prevTotal : total)}</span>
+                    </div>
             `;
+
+            // 전일 데이터가 있고 당일 데이터도 있으면 전일도 표시
+            if (hasPrevData && !todayAllZero) {
+                html += `
+                    <div style="font-size: 13px; font-weight: 600; margin: 16px 0 8px 0; color: var(--text-secondary);">전일 (${data.prev_date})</div>
+                    <div class="investor-row">
+                        <span class="name">개인</span>
+                        <span class="amount ${getClass(data.prev_individual)}">${formatAmount(data.prev_individual)}</span>
+                    </div>
+                    <div class="investor-row">
+                        <span class="name">외국인</span>
+                        <span class="amount ${getClass(data.prev_foreign)}">${formatAmount(data.prev_foreign)}</span>
+                    </div>
+                    <div class="investor-row">
+                        <span class="name">기관</span>
+                        <span class="amount ${getClass(data.prev_institution)}">${formatAmount(data.prev_institution)}</span>
+                    </div>
+                    <div class="investor-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+                        <span class="name">전체</span>
+                        <span class="amount ${getClass(prevTotal)}">${formatAmount(prevTotal)}</span>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            container.innerHTML = html;
         }
 
         // Action Sheet
