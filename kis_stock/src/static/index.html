@@ -1226,7 +1226,9 @@
                                 <div class="total ${getChangeClass(total)}">${formatQty(total)}</div>
                                 <div class="detail">
                                     ${prevPrefix}<span class="${getChangeClass(individual)}">개인 ${formatQty(individual)}</span>
+                                    <span style="color: var(--text-secondary);">·</span>
                                     <span class="${getChangeClass(foreign)}">외인 ${formatQty(foreign)}</span>
+                                    <span style="color: var(--text-secondary);">·</span>
                                     <span class="${getChangeClass(institution)}">기관 ${formatQty(institution)}</span>
                                 </div>
                             </div>
@@ -1548,7 +1550,6 @@
                         </div>
                         <div style="text-align: right;">
                             <div style="font-size: 20px; font-weight: 700;" class="${getClass(total)}">${formatAmount(total)}</div>
-                            <div style="font-size: 11px; color: var(--text-secondary);">전체</div>
                         </div>
                     </div>
                     <div class="investor-row">
