@@ -18,6 +18,8 @@ class StockPrice(BaseModel):
     eps: Optional[float] = Field(default=None, description="EPS")
     bps: Optional[float] = Field(default=None, description="BPS")
     volume: int = Field(default=0, description="거래량")
+    prev_volume: Optional[int] = Field(default=None, description="전일 거래량")
+    volume_change_rate: Optional[float] = Field(default=None, description="거래량 증가율 (%)")
     timestamp: datetime = Field(default_factory=datetime.now)
 
 

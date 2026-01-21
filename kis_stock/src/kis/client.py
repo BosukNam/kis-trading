@@ -175,6 +175,14 @@ class KISClient:
         if stock_name == "None":
             stock_name = stock_code
 
+        volume = self._safe_int(output.get("acml_vol"))
+        prev_volume = self._safe_int(output.get("prdy_vol")) or None
+
+        # 거래량 증가율 계산
+        volume_change_rate = None
+        if prev_volume and prev_volume > 0:
+            volume_change_rate = round((volume - prev_volume) / prev_volume * 100, 2)
+
         return StockPrice(
             stock_code=stock_code,
             stock_name=stock_name,
@@ -186,7 +194,9 @@ class KISClient:
             pbr=self._safe_float(output.get("pbr")) or None,
             eps=self._safe_float(output.get("eps")) or None,
             bps=self._safe_float(output.get("bps")) or None,
-            volume=self._safe_int(output.get("acml_vol")),
+            volume=volume,
+            prev_volume=prev_volume,
+            volume_change_rate=volume_change_rate,
         )
 
     async def get_overseas_stock_price(

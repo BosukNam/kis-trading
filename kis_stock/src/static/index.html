@@ -108,8 +108,8 @@
             margin-top: 8px;
         }
 
-        .profit.positive { color: var(--accent-green); }
-        .profit.negative { color: var(--accent-red); }
+        .profit.positive, .positive { color: var(--accent-green); }
+        .profit.negative, .negative { color: var(--accent-red); }
 
         .section-title {
             font-size: 14px;
@@ -1040,7 +1040,7 @@
                     <div class="price-details">
                         <div class="detail-item">
                             <span class="label">거래량</span>
-                            <span class="value">${formatNumber(data.volume)}</span>
+                            <span class="value">${formatNumber(data.volume)}${data.volume_change_rate != null ? ` <span class="${getChangeClass(data.volume_change_rate)}">(${formatPercent(data.volume_change_rate)})</span>` : ''}</span>
                         </div>
                         ${!isOverseas ? `
                         <div class="detail-item">
