@@ -356,26 +356,19 @@
             color: white;
         }
 
-        .sort-toggle {
-            display: flex;
-            gap: 6px;
-            margin-bottom: 12px;
-        }
-
-        .sort-toggle button {
+        .sort-btn {
             padding: 6px 12px;
             border: 1px solid var(--border-color);
-            background: transparent;
+            background: var(--bg-card);
             color: var(--text-secondary);
             border-radius: 16px;
             font-size: 12px;
             cursor: pointer;
+            margin-bottom: 12px;
         }
 
-        .sort-toggle button.active {
-            background: var(--accent-blue);
-            border-color: var(--accent-blue);
-            color: white;
+        .sort-btn:active {
+            background: var(--bg-secondary);
         }
 
         /* Action Sheet 스타일 */
@@ -613,28 +606,32 @@
             });
         }
 
-        // 정렬 토글 HTML 생성
-        function createSortToggle(tabName) {
-            return `
-                <div class="sort-toggle" id="${tabName}-sort-toggle">
-                    <button class="${currentSortOrder === 'default' ? 'active' : ''}" data-sort="default">기본</button>
-                    <button class="${currentSortOrder === 'high' ? 'active' : ''}" data-sort="high">▲ 높은순</button>
-                    <button class="${currentSortOrder === 'low' ? 'active' : ''}" data-sort="low">▼ 낮은순</button>
-                </div>
-            `;
+        // 정렬 버튼 라벨
+        function getSortLabel() {
+            if (currentSortOrder === 'high') return '▲ 높은순';
+            if (currentSortOrder === 'low') return '▼ 낮은순';
+            return '정렬';
         }
 
-        // 정렬 토글 이벤트 바인딩
+        // 정렬 순환: default -> high -> low -> default
+        function nextSortOrder() {
+            if (currentSortOrder === 'default') return 'high';
+            if (currentSortOrder === 'high') return 'low';
+            return 'default';
+        }
+
+        // 정렬 버튼 HTML 생성
+        function createSortToggle(tabName) {
+            return `<button class="sort-btn" id="${tabName}-sort-btn">${getSortLabel()}</button>`;
+        }
+
+        // 정렬 버튼 이벤트 바인딩
         function bindSortToggle(tabName, reloadFunc) {
-            const toggle = document.getElementById(`${tabName}-sort-toggle`);
-            if (toggle) {
-                toggle.addEventListener('click', (e) => {
-                    if (e.target.tagName === 'BUTTON') {
-                        currentSortOrder = e.target.dataset.sort;
-                        toggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-                        e.target.classList.add('active');
-                        reloadFunc();
-                    }
+            const btn = document.getElementById(`${tabName}-sort-btn`);
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    currentSortOrder = nextSortOrder();
+                    reloadFunc();
                 });
             }
         }
