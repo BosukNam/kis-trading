@@ -356,6 +356,28 @@
             color: white;
         }
 
+        .sort-toggle {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+
+        .sort-toggle button {
+            padding: 6px 12px;
+            border: 1px solid var(--border-color);
+            background: transparent;
+            color: var(--text-secondary);
+            border-radius: 16px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .sort-toggle button.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
         /* Action Sheet 스타일 */
         .action-sheet-overlay {
             position: fixed;
@@ -576,6 +598,47 @@
         let cachedDomesticBalance = null;
         let cachedOverseasBalance = null;
 
+        // 정렬 상태 (default, high, low)
+        let currentSortOrder = 'default';
+
+        // 정렬 함수
+        function sortHoldings(holdings, sortOrder, getRateFunc) {
+            if (sortOrder === 'default') {
+                return [...holdings];
+            }
+            return [...holdings].sort((a, b) => {
+                const rateA = getRateFunc(a);
+                const rateB = getRateFunc(b);
+                return sortOrder === 'high' ? rateB - rateA : rateA - rateB;
+            });
+        }
+
+        // 정렬 토글 HTML 생성
+        function createSortToggle(tabName) {
+            return `
+                <div class="sort-toggle" id="${tabName}-sort-toggle">
+                    <button class="${currentSortOrder === 'default' ? 'active' : ''}" data-sort="default">기본</button>
+                    <button class="${currentSortOrder === 'high' ? 'active' : ''}" data-sort="high">▲ 높은순</button>
+                    <button class="${currentSortOrder === 'low' ? 'active' : ''}" data-sort="low">▼ 낮은순</button>
+                </div>
+            `;
+        }
+
+        // 정렬 토글 이벤트 바인딩
+        function bindSortToggle(tabName, reloadFunc) {
+            const toggle = document.getElementById(`${tabName}-sort-toggle`);
+            if (toggle) {
+                toggle.addEventListener('click', (e) => {
+                    if (e.target.tagName === 'BUTTON') {
+                        currentSortOrder = e.target.dataset.sort;
+                        toggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+                        e.target.classList.add('active');
+                        reloadFunc();
+                    }
+                });
+            }
+        }
+
         // 숫자 포맷
         function formatNumber(num) {
             return new Intl.NumberFormat('ko-KR').format(num);
@@ -698,10 +761,17 @@
                 `;
             }
 
+            // 정렬 토글 추가
+            html += createSortToggle('balance-domestic');
+
             html += '<div class="stock-list">';
 
             if (data.holdings && data.holdings.length > 0) {
-                data.holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
+                // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
+                let sorted = [...data.holdings].sort((a, b) => b.eval_amount - a.eval_amount);
+                sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+
+                sorted.forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
                         <div class="stock-item" onclick="showActionSheet('${stock.stock_name}', '${stock.stock_code}', 'domestic', '')">
@@ -723,6 +793,9 @@
 
             html += '</div>';
             container.innerHTML = html;
+
+            // 정렬 이벤트 바인딩
+            bindSortToggle('balance-domestic', () => renderDomesticBalance(data, container, showSummary));
         }
 
         function renderOverseasBalance(data, container, showSummary = true) {
@@ -744,10 +817,17 @@
                 `;
             }
 
+            // 정렬 토글 추가
+            html += createSortToggle('balance-overseas');
+
             html += '<div class="stock-list">';
 
             if (data.holdings && data.holdings.length > 0) {
-                data.holdings.forEach(stock => {
+                // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
+                let sorted = [...data.holdings].sort((a, b) => b.eval_amount - a.eval_amount);
+                sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+
+                sorted.forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
                         <div class="stock-item" onclick="showActionSheet('${stock.stock_name}', '${stock.symbol}', 'overseas', '${stock.exchange}')">
@@ -769,6 +849,9 @@
 
             html += '</div>';
             container.innerHTML = html;
+
+            // 정렬 이벤트 바인딩
+            bindSortToggle('balance-overseas', () => renderOverseasBalance(data, container, showSummary));
         }
 
         // 시세 탭 - 보유종목 로드
@@ -846,11 +929,31 @@
             renderPriceHoldings(holdingsWithPrice, container, isOverseas);
         }
 
+        // 캐시된 시세 데이터 (정렬 시 재사용)
+        let cachedPriceHoldings = null;
+
         function renderPriceHoldings(holdings, container, isOverseas) {
-            let html = '<div class="section-title">내 보유종목</div><div class="stock-list">';
+            // 캐시 저장
+            cachedPriceHoldings = { holdings, isOverseas };
+
+            let html = '<div class="section-title">내 보유종목</div>';
+
+            // 정렬 토글 추가
+            html += createSortToggle('price');
+
+            html += '<div class="stock-list">';
 
             if (holdings.length > 0) {
-                holdings.forEach(stock => {
+                // 금일 변동률 기준 정렬
+                const getChangeRate = (stock) => {
+                    if (stock.priceData && !stock.priceData.error) {
+                        return stock.priceData.change_rate || 0;
+                    }
+                    return 0;
+                };
+                const sorted = sortHoldings(holdings, currentSortOrder, getChangeRate);
+
+                sorted.forEach(stock => {
                     const code = isOverseas ? stock.symbol : stock.stock_code;
                     const name = stock.stock_name;
                     const priceData = stock.priceData;
@@ -897,6 +1000,13 @@
 
             html += '</div>';
             container.innerHTML = html;
+
+            // 정렬 이벤트 바인딩
+            bindSortToggle('price', () => {
+                if (cachedPriceHoldings) {
+                    renderPriceHoldings(cachedPriceHoldings.holdings, container, cachedPriceHoldings.isOverseas);
+                }
+            });
         }
 
         // 수급 탭 - 보유종목 로드
@@ -932,11 +1042,17 @@
         }
 
         function renderInvestorHoldings(data, container) {
-            let html = '<div class="stock-list">';
+            // 정렬 토글 추가
+            let html = createSortToggle('investor');
+            html += '<div class="stock-list">';
 
             const holdings = data.holdings || [];
             if (holdings.length > 0) {
-                holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
+                // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
+                let sorted = [...holdings].sort((a, b) => b.eval_amount - a.eval_amount);
+                sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+
+                sorted.forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
                         <div class="stock-item" onclick="quickSearchInvestor('${stock.stock_code}', '${stock.stock_name}')">
@@ -957,6 +1073,9 @@
 
             html += '</div>';
             container.innerHTML = html;
+
+            // 정렬 이벤트 바인딩
+            bindSortToggle('investor', () => renderInvestorHoldings(data, container));
         }
 
         // 시세 조회
@@ -1374,12 +1493,19 @@
         }
 
         function renderTechnicalHoldings(data, container, market = 'domestic') {
-            let html = '<div class="stock-list">';
             const isOverseas = market === 'overseas';
+
+            // 정렬 토글 추가
+            let html = createSortToggle('technical');
+            html += '<div class="stock-list">';
 
             const holdings = data.holdings || [];
             if (holdings.length > 0) {
-                holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
+                // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
+                let sorted = [...holdings].sort((a, b) => b.eval_amount - a.eval_amount);
+                sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+
+                sorted.forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     const evalAmount = isOverseas ? formatCurrency(stock.eval_amount / 100, 'USD') : formatCurrency(stock.eval_amount);
                     const stockCode = isOverseas ? stock.symbol : stock.stock_code;
@@ -1403,6 +1529,9 @@
 
             html += '</div>';
             container.innerHTML = html;
+
+            // 정렬 이벤트 바인딩
+            bindSortToggle('technical', () => renderTechnicalHoldings(data, container, market));
         }
 
         // 기술지표 조회
@@ -1619,11 +1748,17 @@
         }
 
         function renderFinancialHoldings(data, container) {
-            let html = '<div class="stock-list">';
+            // 정렬 토글 추가
+            let html = createSortToggle('financial');
+            html += '<div class="stock-list">';
 
             const holdings = data.holdings || [];
             if (holdings.length > 0) {
-                holdings.sort((a, b) => b.eval_amount - a.eval_amount).forEach(stock => {
+                // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
+                let sorted = [...holdings].sort((a, b) => b.eval_amount - a.eval_amount);
+                sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+
+                sorted.forEach(stock => {
                     const changeClass = getChangeClass(stock.profit_rate);
                     html += `
                         <div class="stock-item" onclick="quickSearchFinancial('${stock.stock_name}', '${stock.stock_code}')">
@@ -1644,6 +1779,9 @@
 
             html += '</div>';
             container.innerHTML = html;
+
+            // 정렬 이벤트 바인딩
+            bindSortToggle('financial', () => renderFinancialHoldings(data, container));
         }
 
         async function quickSearchFinancial(stockName, stockCode) {
@@ -2036,22 +2174,36 @@
             }
 
             const isOverseas = market === 'overseas';
-            let html = '<div class="stock-list">';
-            data.holdings.forEach(h => {
+
+            // 정렬 토글 추가
+            let html = createSortToggle('news');
+            html += '<div class="stock-list">';
+
+            // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
+            let sorted = [...data.holdings].sort((a, b) => b.eval_amount - a.eval_amount);
+            sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+
+            sorted.forEach(h => {
                 const stockName = h.stock_name;
                 const stockCode = isOverseas ? h.symbol : h.stock_code;
+                const changeClass = getChangeClass(h.profit_rate);
                 html += `
                     <div class="stock-item" onclick="quickSearchNews('${stockName}')">
                         <div class="stock-info">
                             <h3>${stockName}</h3>
                             <div class="code">${stockCode}${isOverseas ? ' · ' + (h.exchange || '') : ''}</div>
                         </div>
-                        <div style="color: var(--text-secondary); font-size: 20px;">→</div>
+                        <div class="stock-price">
+                            <div class="change ${changeClass}">${formatPercent(h.profit_rate)}</div>
+                        </div>
                     </div>
                 `;
             });
             html += '</div>';
             container.innerHTML = html;
+
+            // 정렬 이벤트 바인딩
+            bindSortToggle('news', () => renderNewsHoldings(data, container, market));
         }
 
         async function searchNews() {
