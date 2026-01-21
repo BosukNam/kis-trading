@@ -360,8 +360,13 @@ class KISClient:
         if not data or not data.get("output"):
             return None
 
-        # 최근 데이터 (첫 번째 항목)
-        output = data["output"][0] if data["output"] else {}
+        outputs = data["output"]
+
+        # 당일 데이터 (첫 번째 항목)
+        output = outputs[0] if outputs else {}
+
+        # 전일 데이터 (두 번째 항목)
+        prev_output = outputs[1] if len(outputs) > 1 else None
 
         # 종목명 조회를 위해 현재가 API 호출
         price_data = await self.get_domestic_stock_price(stock_code)
@@ -377,6 +382,11 @@ class KISClient:
             individual_amount=self._safe_int(output.get("prsn_ntby_tr_pbmn")),
             foreign_amount=self._safe_int(output.get("frgn_ntby_tr_pbmn")),
             institution_amount=self._safe_int(output.get("orgn_ntby_tr_pbmn")),
+            # 전일 데이터
+            prev_date=prev_output.get("stck_bsop_date") if prev_output else None,
+            prev_individual=self._safe_int(prev_output.get("prsn_ntby_qty")) if prev_output else None,
+            prev_foreign=self._safe_int(prev_output.get("frgn_ntby_qty")) if prev_output else None,
+            prev_institution=self._safe_int(prev_output.get("orgn_ntby_qty")) if prev_output else None,
         )
 
     async def get_daily_prices(

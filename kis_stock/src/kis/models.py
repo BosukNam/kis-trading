@@ -81,6 +81,11 @@ class InvestorTrend(BaseModel):
     individual_amount: int = Field(default=0, description="개인 순매수 금액")
     foreign_amount: int = Field(default=0, description="외국인 순매수 금액")
     institution_amount: int = Field(default=0, description="기관 순매수 금액")
+    # 전일 데이터
+    prev_date: Optional[str] = Field(default=None, description="전일 기준일")
+    prev_individual: Optional[int] = Field(default=None, description="전일 개인 순매수 (주)")
+    prev_foreign: Optional[int] = Field(default=None, description="전일 외국인 순매수 (주)")
+    prev_institution: Optional[int] = Field(default=None, description="전일 기관 순매수 (주)")
     timestamp: datetime = Field(default_factory=datetime.now)
 
 

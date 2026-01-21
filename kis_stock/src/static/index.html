@@ -1091,24 +1091,40 @@
             html += '<div class="stock-list">';
 
             if (holdings.length > 0) {
+                // 투자자 데이터 추출 (당일 0이면 전일 사용)
+                const getInvestorData = (inv) => {
+                    if (!inv || inv.error) return { individual: 0, foreign: 0, institution: 0, isPrev: false };
+
+                    const today = {
+                        individual: inv.individual || 0,
+                        foreign: inv.foreign || 0,
+                        institution: inv.institution || 0
+                    };
+
+                    // 당일 데이터가 모두 0이면 전일 데이터 사용
+                    if (today.individual === 0 && today.foreign === 0 && today.institution === 0) {
+                        if (inv.prev_individual != null || inv.prev_foreign != null || inv.prev_institution != null) {
+                            return {
+                                individual: inv.prev_individual || 0,
+                                foreign: inv.prev_foreign || 0,
+                                institution: inv.prev_institution || 0,
+                                isPrev: true
+                            };
+                        }
+                    }
+                    return { ...today, isPrev: false };
+                };
+
                 // 외국인+기관 순매수 합산 기준 정렬
                 const getNetBuy = (h) => {
-                    if (h.investorData && !h.investorData.error) {
-                        return (h.investorData.foreign || 0) + (h.investorData.institution || 0);
-                    }
-                    return 0;
+                    const data = getInvestorData(h.investorData);
+                    return data.foreign + data.institution;
                 };
                 const sorted = sortHoldings(holdings, currentSortOrder, getNetBuy);
 
                 sorted.forEach(stock => {
-                    const inv = stock.investorData;
-                    let individual = 0, foreign = 0, institution = 0;
-
-                    if (inv && !inv.error) {
-                        individual = inv.individual || 0;
-                        foreign = inv.foreign || 0;
-                        institution = inv.institution || 0;
-                    }
+                    const data = getInvestorData(stock.investorData);
+                    const { individual, foreign, institution, isPrev } = data;
 
                     const formatQty = (val) => {
                         if (val === 0) return '0';
@@ -1119,11 +1135,13 @@
                         return sign + formatNumber(val);
                     };
 
+                    const prevLabel = isPrev ? '<span style="color: var(--text-secondary); font-size: 10px;">(전일)</span>' : '';
+
                     html += `
                         <div class="stock-item" onclick="quickSearchInvestor('${stock.stock_code}', '${stock.stock_name}')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
-                                <div class="code">${stock.stock_code}</div>
+                                <div class="code">${stock.stock_code} ${prevLabel}</div>
                             </div>
                             <div class="investor-data">
                                 <span class="${getChangeClass(individual)}">개인 ${formatQty(individual)}</span>
