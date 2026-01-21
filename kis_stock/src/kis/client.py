@@ -630,11 +630,11 @@ class KISClient:
         """
         end_date = datetime.now().strftime("%Y%m%d")
 
-        # 해외주식 기간별시세 API (FHKST03030100)
+        # 해외주식 기간별시세 API (HHDFS76240000)
         data = await self._api_call(
             "GET",
             "/uapi/overseas-price/v1/quotations/dailyprice",
-            "FHKST03030100",
+            "HHDFS76240000",
             params={
                 "AUTH": "",
                 "EXCD": exchange,
