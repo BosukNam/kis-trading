@@ -1834,10 +1834,18 @@
 
             // 한글이 포함되어 있으면 보유종목에서 검색
             const hasKorean = /[가-힣]/.test(input);
-            let code = input;
+            // 영문 대문자만으로 이루어진 경우 해외 주식으로 판단 (1-5자리)
+            const isOverseasCode = /^[A-Za-z]{1,5}$/.test(input);
+            // 숫자 6자리는 국내 주식
+            const isDomesticCode = /^\d{6}$/.test(input);
+
+            let code = input.toUpperCase();
             let stockName = '';
+            let isOverseas = false;
+            let exchange = 'NAS'; // 기본값: 나스닥
 
             if (hasKorean) {
+                // 한글 검색: 보유종목에서 찾기
                 let found = null;
                 if (cachedDomesticBalance) {
                     found = cachedDomesticBalance.holdings.find(h =>
@@ -1847,19 +1855,42 @@
                 if (found) {
                     code = found.stock_code;
                     stockName = found.stock_name;
+                    isOverseas = false;
                 } else {
                     container.innerHTML = '<div class="error">보유 종목에서 찾을 수 없습니다. 종목코드로 검색하세요.</div>';
                     return;
                 }
+            } else if (isOverseasCode) {
+                // 영문 코드: 해외 주식
+                isOverseas = true;
+                // 보유종목에서 거래소 정보 찾기
+                if (cachedOverseasBalance) {
+                    const found = cachedOverseasBalance.holdings.find(h =>
+                        h.symbol && h.symbol.toUpperCase() === code
+                    );
+                    if (found) {
+                        stockName = found.stock_name || '';
+                        exchange = found.exchange || 'NAS';
+                    }
+                }
+            } else if (isDomesticCode) {
+                // 6자리 숫자: 국내 주식
+                isOverseas = false;
             }
 
             try {
+                const args = { stock_code: code };
+                if (isOverseas) {
+                    args.market = 'overseas';
+                    args.exchange = exchange;
+                }
+
                 const res = await fetch('/call', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: 'get_technical_indicators',
-                        arguments: { stock_code: code }
+                        arguments: args
                     })
                 });
 
@@ -1875,7 +1906,7 @@
                     data.stock_name = stockName;
                 }
 
-                renderTechnical(data, container);
+                renderTechnical(data, container, isOverseas);
                 updateTimestamp();
             } catch (e) {
                 container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
