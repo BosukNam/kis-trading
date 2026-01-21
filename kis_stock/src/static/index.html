@@ -171,6 +171,18 @@
             margin-top: 4px;
         }
 
+        .investor-data {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 2px;
+            font-size: 12px;
+        }
+
+        .investor-data span {
+            white-space: nowrap;
+        }
+
         .search-box {
             background: var(--bg-card);
             border-radius: 12px;
@@ -1007,59 +1019,116 @@
         }
 
         // 수급 탭 - 보유종목 로드
+        let cachedInvestorHoldings = null;
+
         async function loadInvestorHoldings() {
             const container = document.getElementById('investor-holdings-content');
 
-            if (cachedDomesticBalance) {
-                renderInvestorHoldings(cachedDomesticBalance, container);
+            // 잔고 데이터 가져오기
+            let balance = cachedDomesticBalance;
+
+            if (!balance) {
+                container.innerHTML = '<div class="loading">로딩 중</div>';
+
+                try {
+                    const res = await fetch('/call', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: 'get_domestic_balance', arguments: {} })
+                    });
+
+                    const data = await res.json();
+
+                    if (data.error) {
+                        container.innerHTML = `<div class="error">${data.error}</div>`;
+                        return;
+                    }
+
+                    cachedDomesticBalance = data;
+                    balance = data;
+                } catch (e) {
+                    container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
+                    return;
+                }
+            }
+
+            const holdings = balance.holdings || [];
+            if (holdings.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목 없음</div>';
                 return;
             }
 
-            container.innerHTML = '<div class="loading">로딩 중</div>';
+            // 수급 조회 중 표시
+            container.innerHTML = '<div class="loading">수급 조회 중</div>';
 
-            try {
-                const res = await fetch('/call', {
+            // 각 종목의 투자자 동향을 병렬로 조회
+            const investorPromises = holdings.map(stock =>
+                fetch('/call', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: 'get_domestic_balance', arguments: {} })
-                });
+                    body: JSON.stringify({
+                        name: 'get_investor_trend',
+                        arguments: { stock_code: stock.stock_code }
+                    })
+                }).then(res => res.json()).catch(() => null)
+            );
 
-                const data = await res.json();
+            const investorResults = await Promise.all(investorPromises);
 
-                if (data.error) {
-                    container.innerHTML = `<div class="error">${data.error}</div>`;
-                    return;
-                }
+            // 투자자 동향 데이터와 잔고 데이터 합치기
+            const holdingsWithInvestor = holdings.map((stock, i) => ({
+                ...stock,
+                investorData: investorResults[i]
+            }));
 
-                cachedDomesticBalance = data;
-                renderInvestorHoldings(data, container);
-            } catch (e) {
-                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
-            }
+            cachedInvestorHoldings = holdingsWithInvestor;
+            renderInvestorHoldings(holdingsWithInvestor, container);
         }
 
-        function renderInvestorHoldings(data, container) {
+        function renderInvestorHoldings(holdings, container) {
             // 정렬 토글 추가
             let html = createSortToggle('investor');
             html += '<div class="stock-list">';
 
-            const holdings = data.holdings || [];
             if (holdings.length > 0) {
-                // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
-                let sorted = [...holdings].sort((a, b) => b.eval_amount - a.eval_amount);
-                sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+                // 외국인+기관 순매수 합산 기준 정렬
+                const getNetBuy = (h) => {
+                    if (h.investorData && !h.investorData.error) {
+                        return (h.investorData.foreign || 0) + (h.investorData.institution || 0);
+                    }
+                    return 0;
+                };
+                const sorted = sortHoldings(holdings, currentSortOrder, getNetBuy);
 
                 sorted.forEach(stock => {
-                    const changeClass = getChangeClass(stock.profit_rate);
+                    const inv = stock.investorData;
+                    let individual = 0, foreign = 0, institution = 0;
+
+                    if (inv && !inv.error) {
+                        individual = inv.individual || 0;
+                        foreign = inv.foreign || 0;
+                        institution = inv.institution || 0;
+                    }
+
+                    const formatQty = (val) => {
+                        if (val === 0) return '0';
+                        const sign = val > 0 ? '+' : '';
+                        if (Math.abs(val) >= 10000) {
+                            return sign + (val / 10000).toFixed(1) + '만';
+                        }
+                        return sign + formatNumber(val);
+                    };
+
                     html += `
                         <div class="stock-item" onclick="quickSearchInvestor('${stock.stock_code}', '${stock.stock_name}')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.stock_code}</div>
                             </div>
-                            <div class="stock-price">
-                                <div class="current">${formatCurrency(stock.eval_amount)}</div>
-                                <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
+                            <div class="investor-data">
+                                <span class="${getChangeClass(individual)}">개인 ${formatQty(individual)}</span>
+                                <span class="${getChangeClass(foreign)}">외인 ${formatQty(foreign)}</span>
+                                <span class="${getChangeClass(institution)}">기관 ${formatQty(institution)}</span>
                             </div>
                         </div>
                     `;
@@ -1072,7 +1141,11 @@
             container.innerHTML = html;
 
             // 정렬 이벤트 바인딩
-            bindSortToggle('investor', () => renderInvestorHoldings(data, container));
+            bindSortToggle('investor', () => {
+                if (cachedInvestorHoldings) {
+                    renderInvestorHoldings(cachedInvestorHoldings, container);
+                }
+            });
         }
 
         // 시세 조회
