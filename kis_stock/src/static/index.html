@@ -185,7 +185,8 @@
             border-top-color: #333;
         }
 
-        .tooltip-icon:hover .tooltip-text {
+        .tooltip-icon:hover .tooltip-text,
+        .tooltip-icon.active .tooltip-text {
             visibility: visible;
             opacity: 1;
         }
@@ -2968,6 +2969,25 @@
         });
         document.getElementById('news-name').addEventListener('keypress', e => {
             if (e.key === 'Enter') searchNews();
+        });
+
+        // 툴팁 클릭/터치 이벤트 (모바일 지원)
+        document.addEventListener('click', (e) => {
+            const tooltipIcon = e.target.closest('.tooltip-icon');
+
+            // 모든 활성 툴팁 닫기
+            document.querySelectorAll('.tooltip-icon.active').forEach(el => {
+                if (el !== tooltipIcon) {
+                    el.classList.remove('active');
+                }
+            });
+
+            // 클릭한 툴팁 토글
+            if (tooltipIcon) {
+                e.preventDefault();
+                e.stopPropagation();
+                tooltipIcon.classList.toggle('active');
+            }
         });
 
         // 초기 로드
