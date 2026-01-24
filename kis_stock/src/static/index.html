@@ -119,6 +119,22 @@
             padding-left: 4px;
         }
 
+        .card-section-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #ffffff;
+            margin: 20px 0 10px 0;
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .card-section-title .emoji {
+            font-size: 14px;
+        }
+
         .stock-list {
             display: flex;
             flex-direction: column;
@@ -169,6 +185,30 @@
         .stock-price .change {
             font-size: 13px;
             margin-top: 4px;
+        }
+
+        .financial-metrics {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .financial-metrics .metric {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 40px;
+        }
+
+        .financial-metrics .metric-label {
+            font-size: 10px;
+            color: var(--text-secondary);
+            margin-bottom: 2px;
+        }
+
+        .financial-metrics .metric-value {
+            font-size: 13px;
+            font-weight: 600;
         }
 
         .investor-data {
@@ -652,6 +692,9 @@
         // 캐시된 잔고 데이터
         let cachedDomesticBalance = null;
         let cachedOverseasBalance = null;
+
+        // 캐시된 재무비율 데이터 (종목코드 -> 데이터)
+        let cachedFinancialRatios = {};
 
         // 정렬 상태 (default, high, low)
         let currentSortOrder = 'default';
@@ -2042,6 +2085,8 @@
 
             if (cachedDomesticBalance) {
                 renderFinancialHoldings(cachedDomesticBalance, container);
+                // 재무비율 데이터 병렬 조회
+                await fetchFinancialRatiosForHoldings(cachedDomesticBalance.holdings || [], container);
                 return;
             }
 
@@ -2063,9 +2108,48 @@
 
                 cachedDomesticBalance = data;
                 renderFinancialHoldings(data, container);
+                // 재무비율 데이터 병렬 조회
+                await fetchFinancialRatiosForHoldings(data.holdings || [], container);
             } catch (e) {
                 container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
             }
+        }
+
+        // 보유종목의 재무비율 데이터 병렬 조회
+        async function fetchFinancialRatiosForHoldings(holdings, container) {
+            if (!holdings || holdings.length === 0) return;
+
+            // 아직 캐시되지 않은 종목만 조회
+            const uncachedHoldings = holdings.filter(h => !cachedFinancialRatios[h.stock_code]);
+
+            if (uncachedHoldings.length === 0) {
+                // 이미 모두 캐시됨 - 다시 렌더링
+                renderFinancialHoldings(cachedDomesticBalance, container);
+                return;
+            }
+
+            // 병렬로 재무비율 조회
+            const promises = uncachedHoldings.map(h =>
+                fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_financial_ratio',
+                        arguments: { stock_code: h.stock_code, stock_name: h.stock_name }
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.error) {
+                        cachedFinancialRatios[h.stock_code] = data;
+                    }
+                })
+                .catch(() => {})
+            );
+
+            await Promise.all(promises);
+            // 재무비율 로드 완료 후 다시 렌더링
+            renderFinancialHoldings(cachedDomesticBalance, container);
         }
 
         function renderFinancialHoldings(data, container) {
@@ -2075,21 +2159,36 @@
 
             const holdings = data.holdings || [];
             if (holdings.length > 0) {
-                // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
+                // 기본 정렬: 평가금액 높은 순, 그 외: ROE 기준
                 let sorted = [...holdings].sort((a, b) => b.eval_amount - a.eval_amount);
-                sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+                sorted = sortHoldings(sorted, currentSortOrder, h => {
+                    const ratio = cachedFinancialRatios[h.stock_code];
+                    return ratio?.roe || 0;
+                });
 
                 sorted.forEach(stock => {
-                    const changeClass = getChangeClass(stock.profit_rate);
+                    const ratio = cachedFinancialRatios[stock.stock_code];
+                    const formatVal = (val) => val !== null && val !== undefined ? val.toFixed(1) : '-';
+
                     html += `
                         <div class="stock-item" onclick="quickSearchFinancial('${stock.stock_name}', '${stock.stock_code}')">
                             <div class="stock-info">
                                 <h3>${stock.stock_name}</h3>
                                 <div class="code">${stock.stock_code}</div>
                             </div>
-                            <div class="stock-price">
-                                <div class="current">${formatCurrency(stock.eval_amount)}</div>
-                                <div class="change ${changeClass}">${formatPercent(stock.profit_rate)}</div>
+                            <div class="financial-metrics">
+                                <div class="metric">
+                                    <span class="metric-label">ROE</span>
+                                    <span class="metric-value ${ratio?.roe ? getChangeClass(ratio.roe) : ''}">${ratio ? formatVal(ratio.roe) : '-'}</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">PER</span>
+                                    <span class="metric-value">${ratio ? formatVal(ratio.per) : '-'}</span>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label">PBR</span>
+                                    <span class="metric-value">${ratio ? formatVal(ratio.pbr) : '-'}</span>
+                                </div>
                             </div>
                         </div>
                     `;
@@ -2257,7 +2356,7 @@
                     <div class="name">${data.stock_name}</div>
                     <div class="code">${data.stock_code} · ${data.fiscal_year}</div>
 
-                    <div class="section-title" style="margin-top: 16px;">수익성</div>
+                    <div class="card-section-title" style="margin-top: 16px;"><span class="emoji">💰</span>수익성</div>
                     <div class="price-details" style="border-top: none; padding-top: 8px;">
                         <div class="detail-item">
                             <span class="label">ROE</span>
@@ -2269,7 +2368,7 @@
                         </div>
                     </div>
 
-                    <div class="section-title" style="margin-top: 16px;">성장성</div>
+                    <div class="card-section-title" style="margin-top: 16px;"><span class="emoji">📈</span>성장성</div>
                     <div class="price-details" style="border-top: none; padding-top: 8px;">
                         <div class="detail-item">
                             <span class="label">매출액증가율</span>
@@ -2281,7 +2380,7 @@
                         </div>
                     </div>
 
-                    <div class="section-title" style="margin-top: 16px;">밸류에이션</div>
+                    <div class="card-section-title" style="margin-top: 16px;"><span class="emoji">⚖️</span>밸류에이션</div>
                     <div class="price-details" style="border-top: none; padding-top: 8px;">
                         <div class="detail-item">
                             <span class="label">PER</span>
