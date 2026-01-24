@@ -164,23 +164,27 @@
             opacity: 0;
             position: absolute;
             bottom: 130%;
-            left: 0;
+            left: 50%;
+            transform: translateX(-50%);
             background: #333;
             color: #fff;
             padding: 8px 12px;
             border-radius: 8px;
             font-size: 12px;
-            white-space: nowrap;
+            width: max-content;
+            max-width: calc(100vw - 40px);
             z-index: 1000;
             transition: opacity 0.2s, visibility 0.2s;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            line-height: 1.4;
         }
 
         .tooltip-icon .tooltip-text::after {
             content: '';
             position: absolute;
             top: 100%;
-            left: 10px;
+            left: 50%;
+            transform: translateX(-50%);
             border: 6px solid transparent;
             border-top-color: #333;
         }
