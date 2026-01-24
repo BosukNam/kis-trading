@@ -783,6 +783,10 @@
         let investorSortType = 'total';
         let investorSortOrder = 'default';
 
+        // 재무탭 정렬 상태 (type: roe, per, pbr / order: default, high, low)
+        let financialSortType = 'roe';
+        let financialSortOrder = 'default';
+
         // 정렬 함수
         function sortHoldings(holdings, sortOrder, getRateFunc) {
             if (sortOrder === 'default') {
@@ -831,6 +835,28 @@
             types.forEach(type => {
                 const isActive = investorSortType === type && investorSortOrder !== 'default';
                 html += `<button class="sort-chip ${isActive ? 'active' : ''}" data-type="${type}">${getInvestorSortLabel(type)}</button>`;
+            });
+            html += '</div>';
+            return html;
+        }
+
+        // 재무탭 정렬 칩 라벨
+        function getFinancialSortLabel(type) {
+            const labels = { roe: 'ROE', per: 'PER', pbr: 'PBR' };
+            const label = labels[type] || 'ROE';
+            if (financialSortType !== type) return label;
+            if (financialSortOrder === 'high') return '▲ ' + label;
+            if (financialSortOrder === 'low') return '▼ ' + label;
+            return label;
+        }
+
+        // 재무탭 정렬 칩 HTML 생성
+        function createFinancialSortToggle() {
+            const types = ['roe', 'per', 'pbr'];
+            let html = '<div class="investor-sort-chips" id="financial-sort-chips">';
+            types.forEach(type => {
+                const isActive = financialSortType === type && financialSortOrder !== 'default';
+                html += `<button class="sort-chip ${isActive ? 'active' : ''}" data-type="${type}">${getFinancialSortLabel(type)}</button>`;
             });
             html += '</div>';
             return html;
@@ -2240,18 +2266,26 @@
         }
 
         function renderFinancialHoldings(data, container) {
-            // 정렬 토글 추가
-            let html = createSortToggle('financial');
+            // 정렬 칩 추가
+            let html = createFinancialSortToggle();
             html += '<div class="stock-list">';
 
             const holdings = data.holdings || [];
             if (holdings.length > 0) {
-                // 기본 정렬: 평가금액 높은 순, 그 외: ROE 기준
-                let sorted = [...holdings].sort((a, b) => b.eval_amount - a.eval_amount);
-                sorted = sortHoldings(sorted, currentSortOrder, h => {
+                // 선택된 지표 기준 정렬
+                const getValueFunc = (h) => {
                     const ratio = cachedFinancialRatios[h.stock_code];
-                    return ratio?.roe || 0;
-                });
+                    if (!ratio) return 0;
+                    return ratio[financialSortType] || 0;
+                };
+
+                let sorted;
+                if (financialSortOrder === 'default') {
+                    // 기본 정렬: 평가금액 높은 순
+                    sorted = [...holdings].sort((a, b) => b.eval_amount - a.eval_amount);
+                } else {
+                    sorted = sortHoldings(holdings, financialSortOrder, getValueFunc);
+                }
 
                 sorted.forEach(stock => {
                     const ratio = cachedFinancialRatios[stock.stock_code];
@@ -2287,8 +2321,32 @@
             html += '</div>';
             container.innerHTML = html;
 
-            // 정렬 이벤트 바인딩
-            bindSortToggle('financial', () => renderFinancialHoldings(data, container));
+            // 정렬 칩 이벤트 바인딩
+            bindFinancialSortChips(data, container);
+        }
+
+        // 재무탭 정렬 칩 이벤트 바인딩
+        function bindFinancialSortChips(data, container) {
+            const chipsContainer = document.getElementById('financial-sort-chips');
+            if (chipsContainer) {
+                chipsContainer.addEventListener('click', (e) => {
+                    const chip = e.target.closest('.sort-chip');
+                    if (chip) {
+                        const type = chip.dataset.type;
+                        if (financialSortType === type) {
+                            // 같은 타입 클릭: 정렬 순서 순환
+                            if (financialSortOrder === 'default') financialSortOrder = 'high';
+                            else if (financialSortOrder === 'high') financialSortOrder = 'low';
+                            else financialSortOrder = 'default';
+                        } else {
+                            // 다른 타입 클릭: 해당 타입으로 변경, 높은순으로 시작
+                            financialSortType = type;
+                            financialSortOrder = 'high';
+                        }
+                        renderFinancialHoldings(data, container);
+                    }
+                });
+            }
         }
 
         async function quickSearchFinancial(stockName, stockCode) {
