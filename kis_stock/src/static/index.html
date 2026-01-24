@@ -2424,6 +2424,7 @@
 
         // 뉴스 탭 관련 변수
         let currentNewsMarket = 'domestic';
+        let cachedNewsHoldings = null;
 
         // 뉴스 마켓 토글 이벤트
         document.getElementById('news-market-toggle')?.addEventListener('click', (e) => {
@@ -2439,16 +2440,17 @@
         async function loadNewsTabWithAutoNews() {
             const holdingsContainer = document.getElementById('news-holdings-content');
             const newsContainer = document.getElementById('news-search-result');
+            const isOverseas = currentNewsMarket === 'overseas';
 
             // 보유종목 로드
-            let balance = currentNewsMarket === 'domestic' ? cachedDomesticBalance : cachedOverseasBalance;
+            let balance = isOverseas ? cachedOverseasBalance : cachedDomesticBalance;
 
             if (!balance) {
                 holdingsContainer.innerHTML = '<div class="loading">로딩 중</div>';
                 newsContainer.innerHTML = '<div class="loading">뉴스 로딩 중</div>';
 
                 try {
-                    const endpoint = currentNewsMarket === 'domestic' ? 'get_domestic_balance' : 'get_overseas_balance';
+                    const endpoint = isOverseas ? 'get_overseas_balance' : 'get_domestic_balance';
                     const res = await fetch('/call', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -2463,10 +2465,10 @@
                         return;
                     }
 
-                    if (currentNewsMarket === 'domestic') {
-                        cachedDomesticBalance = data;
-                    } else {
+                    if (isOverseas) {
                         cachedOverseasBalance = data;
+                    } else {
+                        cachedDomesticBalance = data;
                     }
                     balance = data;
                 } catch (e) {
@@ -2476,7 +2478,41 @@
                 }
             }
 
-            renderNewsHoldings(balance, holdingsContainer, currentNewsMarket);
+            const holdings = balance.holdings || [];
+            if (holdings.length === 0) {
+                holdingsContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목 없음</div>';
+                newsContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목이 없습니다</div>';
+                return;
+            }
+
+            // 시세 조회 중 표시
+            holdingsContainer.innerHTML = '<div class="loading">시세 조회 중</div>';
+
+            // 각 종목의 시세를 병렬로 조회
+            const pricePromises = holdings.map(stock => {
+                const code = isOverseas ? stock.symbol : stock.stock_code;
+                return fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_stock_price',
+                        arguments: {
+                            stock_code: code,
+                            market: isOverseas ? 'overseas' : 'domestic'
+                        }
+                    })
+                }).then(res => res.json()).catch(() => null);
+            });
+
+            const priceResults = await Promise.all(pricePromises);
+
+            // 시세 데이터와 잔고 데이터 합치기
+            const holdingsWithPrice = holdings.map((stock, i) => ({
+                ...stock,
+                priceData: priceResults[i]
+            }));
+
+            renderNewsHoldings({ holdings: holdingsWithPrice }, holdingsContainer, currentNewsMarket);
 
             // 보유종목이 있으면 자동으로 뉴스 로드
             if (balance.holdings && balance.holdings.length > 0) {
@@ -2551,40 +2587,81 @@
         // 뉴스 탭 - 보유종목 로드
         async function loadNewsHoldings() {
             const container = document.getElementById('news-holdings-content');
+            const isOverseas = currentNewsMarket === 'overseas';
 
-            const balance = currentNewsMarket === 'domestic' ? cachedDomesticBalance : cachedOverseasBalance;
-
-            if (balance) {
-                renderNewsHoldings(balance, container, currentNewsMarket);
+            // 캐시된 시세 데이터가 있으면 재사용
+            if (cachedNewsHoldings && cachedNewsHoldings.market === currentNewsMarket) {
+                renderNewsHoldings({ holdings: cachedNewsHoldings.holdings }, container, currentNewsMarket);
                 return;
             }
 
-            container.innerHTML = '<div class="loading">로딩 중</div>';
+            const balance = isOverseas ? cachedOverseasBalance : cachedDomesticBalance;
 
-            try {
-                const endpoint = currentNewsMarket === 'domestic' ? 'get_domestic_balance' : 'get_overseas_balance';
-                const res = await fetch('/call', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: endpoint, arguments: {} })
-                });
+            if (!balance) {
+                container.innerHTML = '<div class="loading">로딩 중</div>';
 
-                const data = await res.json();
+                try {
+                    const endpoint = isOverseas ? 'get_overseas_balance' : 'get_domestic_balance';
+                    const res = await fetch('/call', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: endpoint, arguments: {} })
+                    });
 
-                if (data.error) {
-                    container.innerHTML = `<div class="error">${data.error}</div>`;
+                    const data = await res.json();
+
+                    if (data.error) {
+                        container.innerHTML = `<div class="error">${data.error}</div>`;
+                        return;
+                    }
+
+                    if (isOverseas) {
+                        cachedOverseasBalance = data;
+                    } else {
+                        cachedDomesticBalance = data;
+                    }
+                } catch (e) {
+                    container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
                     return;
                 }
-
-                if (currentNewsMarket === 'domestic') {
-                    cachedDomesticBalance = data;
-                } else {
-                    cachedOverseasBalance = data;
-                }
-                renderNewsHoldings(data, container, currentNewsMarket);
-            } catch (e) {
-                container.innerHTML = `<div class="error">조회 실패: ${e.message}</div>`;
             }
+
+            const currentBalance = isOverseas ? cachedOverseasBalance : cachedDomesticBalance;
+            const holdings = currentBalance.holdings || [];
+
+            if (holdings.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-secondary);">보유 종목 없음</div>';
+                return;
+            }
+
+            // 시세 조회 중 표시
+            container.innerHTML = '<div class="loading">시세 조회 중</div>';
+
+            // 각 종목의 시세를 병렬로 조회
+            const pricePromises = holdings.map(stock => {
+                const code = isOverseas ? stock.symbol : stock.stock_code;
+                return fetch('/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'get_stock_price',
+                        arguments: {
+                            stock_code: code,
+                            market: isOverseas ? 'overseas' : 'domestic'
+                        }
+                    })
+                }).then(res => res.json()).catch(() => null);
+            });
+
+            const priceResults = await Promise.all(pricePromises);
+
+            // 시세 데이터와 잔고 데이터 합치기
+            const holdingsWithPrice = holdings.map((stock, i) => ({
+                ...stock,
+                priceData: priceResults[i]
+            }));
+
+            renderNewsHoldings({ holdings: holdingsWithPrice }, container, currentNewsMarket);
         }
 
         function renderNewsHoldings(data, container, market) {
@@ -2595,26 +2672,59 @@
 
             const isOverseas = market === 'overseas';
 
+            // 캐시 저장
+            cachedNewsHoldings = { holdings: data.holdings, market };
+
             // 정렬 토글 추가
             let html = createSortToggle('news');
             html += '<div class="stock-list">';
 
-            // 기본 정렬: 평가금액 높은 순, 그 외: 수익률 기준
-            let sorted = [...data.holdings].sort((a, b) => b.eval_amount - a.eval_amount);
-            sorted = sortHoldings(sorted, currentSortOrder, h => h.profit_rate);
+            // 금일 변동률 기준 정렬
+            const getChangeRate = (stock) => {
+                if (stock.priceData && !stock.priceData.error) {
+                    return stock.priceData.change_rate || 0;
+                }
+                return 0;
+            };
+            const sorted = sortHoldings(data.holdings, currentSortOrder, getChangeRate);
 
-            sorted.forEach(h => {
-                const stockName = h.stock_name;
-                const stockCode = isOverseas ? h.symbol : h.stock_code;
-                const changeClass = getChangeClass(h.profit_rate);
+            sorted.forEach(stock => {
+                const stockName = stock.stock_name;
+                const stockCode = isOverseas ? stock.symbol : stock.stock_code;
+                const priceData = stock.priceData;
+
+                // 금일 변동 정보 (시세 데이터가 있으면 사용)
+                let changeRate = 0;
+                let changeAmount = 0;
+                let currentPrice = stock.current_price;
+
+                if (priceData && !priceData.error) {
+                    changeRate = priceData.change_rate || 0;
+                    changeAmount = priceData.change_amount || 0;
+                    currentPrice = priceData.current_price || stock.current_price;
+                }
+
+                const changeClass = getChangeClass(changeRate);
+
+                // 가격/변동 포맷
+                let priceStr, changeStr;
+                if (isOverseas) {
+                    priceStr = formatCurrency(currentPrice / 100, 'USD');
+                    changeStr = formatCurrency(changeAmount / 100, 'USD');
+                } else {
+                    priceStr = formatCurrency(currentPrice);
+                    changeStr = formatCurrency(changeAmount);
+                }
+
                 html += `
                     <div class="stock-item" onclick="quickSearchNews('${stockName}')">
                         <div class="stock-info">
                             <h3>${stockName}</h3>
-                            <div class="code">${stockCode}${isOverseas ? ' · ' + (h.exchange || '') : ''}</div>
+                            <div class="code">${stockCode}${isOverseas ? ' · ' + (stock.exchange || '') : ''}</div>
                         </div>
                         <div class="stock-price">
-                            <div class="change ${changeClass}">${formatPercent(h.profit_rate)}</div>
+                            <div class="current">${priceStr}</div>
+                            <div class="change ${changeClass}">${changeStr} (${formatPercent(changeRate)})</div>
                         </div>
                     </div>
                 `;
@@ -2623,7 +2733,11 @@
             container.innerHTML = html;
 
             // 정렬 이벤트 바인딩
-            bindSortToggle('news', () => renderNewsHoldings(data, container, market));
+            bindSortToggle('news', () => {
+                if (cachedNewsHoldings) {
+                    renderNewsHoldings({ holdings: cachedNewsHoldings.holdings }, container, cachedNewsHoldings.market);
+                }
+            });
         }
 
         async function searchNews() {
