@@ -760,6 +760,36 @@
         // 캐시된 재무비율 데이터 (종목코드 -> 데이터)
         let cachedFinancialRatios = {};
 
+        // 환율 캐시 (30분간 유효)
+        let cachedExchangeRate = null;
+        let exchangeRateCacheTime = null;
+        const EXCHANGE_RATE_CACHE_DURATION = 30 * 60 * 1000; // 30분
+
+        // 실시간 환율 조회 (USD -> KRW)
+        async function getExchangeRate() {
+            // 캐시 확인
+            if (cachedExchangeRate && exchangeRateCacheTime &&
+                (Date.now() - exchangeRateCacheTime) < EXCHANGE_RATE_CACHE_DURATION) {
+                return cachedExchangeRate;
+            }
+
+            try {
+                // 무료 환율 API 사용
+                const res = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+                const data = await res.json();
+                if (data && data.rates && data.rates.KRW) {
+                    cachedExchangeRate = data.rates.KRW;
+                    exchangeRateCacheTime = Date.now();
+                    return cachedExchangeRate;
+                }
+            } catch (e) {
+                console.warn('환율 조회 실패, 기본값 사용:', e);
+            }
+
+            // 실패 시 기본값 반환
+            return 1300;
+        }
+
         // 정렬 상태 (default, high, low)
         let currentSortOrder = 'default';
 
@@ -918,6 +948,13 @@
                     return;
                 }
 
+                // 해외 잔고인 경우 실시간 환율 적용
+                if (currentBalanceMarket === 'overseas') {
+                    const realTimeRate = await getExchangeRate();
+                    data.exchange_rate = realTimeRate;
+                    data.total_asset_krw = Math.round(data.total_asset_usd * realTimeRate);
+                }
+
                 // 캐시 저장
                 if (currentBalanceMarket === 'domestic') {
                     cachedDomesticBalance = data;
@@ -1003,7 +1040,7 @@
                             ${formatCurrency(data.profit_loss_usd, 'USD')} (${formatPercent(data.profit_rate)})
                         </div>
                         <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
-                            환율: ${formatNumber(data.exchange_rate)}원/USD
+                            환율: ${formatNumber(Math.round(data.exchange_rate))}원/USD ${cachedExchangeRate ? '(실시간)' : ''}
                         </div>
                     </div>
                 `;
